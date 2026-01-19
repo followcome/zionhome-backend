@@ -141,7 +141,7 @@ Initiates the password reset process.
 ```
 
 > **Note:**  
-> The reset process will one-time password (OTP)
+> The reset process will use one-time password (OTP)
 
 ---
 
