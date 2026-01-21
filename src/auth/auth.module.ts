@@ -1,6 +1,9 @@
 // Import Module decorator from NestJS
 import { Module } from '@nestjs/common';
 
+// Import PassportModule for authentication strategies
+import { PassportModule } from '@nestjs/passport';
+
 // Import JwtModule to create and verify JWT tokens
 import { JwtModule } from '@nestjs/jwt';
 
@@ -17,6 +20,9 @@ import { User } from '../entities/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
+// Import JwtStrategy for validating JWT tokens
+import { JwtStrategy } from './jwt.strategy';
+
 // @Module() groups related code together
 // Think of it like a folder that organizes related features
 @Module({
@@ -24,6 +30,10 @@ import { AuthService } from './auth.service';
     // TypeOrmModule.forFeature() makes the User entity available in this module
     // This allows AuthService to query the users table
     TypeOrmModule.forFeature([User]),
+
+    // PassportModule registers Passport for authentication
+    // This is required for using authentication strategies like JWT
+    PassportModule,
 
     // JwtModule.registerAsync() sets up JWT with environment variables
     // We use Async to access ConfigService for the secret key
@@ -51,7 +61,7 @@ import { AuthService } from './auth.service';
   controllers: [AuthController],
 
   // providers: Classes that contain business logic (services)
-  // These can be injected into controllers or other services
-  providers: [AuthService],
+  // JwtStrategy is also a provider - it handles JWT validation
+  providers: [AuthService, JwtStrategy],
 })
 export class AuthModule {}

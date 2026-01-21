@@ -1,7 +1,12 @@
-// Import Injectable and UnauthorizedException from NestJS
+// Import Injectable, UnauthorizedException, and BadRequestException from NestJS
 // Injectable: Marks this class as injectable (can be used in other classes)
 // UnauthorizedException: Error thrown when login fails (returns 401 status)
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+// BadRequestException: Error thrown when request is invalid (returns 400 status)
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 
 // Import JwtService to create JWT tokens
 import { JwtService } from '@nestjs/jwt';
@@ -12,8 +17,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 // Import Repository from TypeORM to query the database
 import { Repository } from 'typeorm';
 
-// Import bcrypt to compare passwords
+// Import bcrypt to compare and hash passwords
 // compare() checks if plain password matches hashed password
+// hash() creates a new hashed password
 import * as bcrypt from 'bcrypt';
 
 // Import the User entity to work with user data
@@ -89,6 +95,64 @@ export class AuthService {
         id: user.id, // User's ID
         email: user.email, // User's email
       },
+    };
+  }
+
+  // changePassword method - allows authenticated user to change their password
+  // userId: The ID of the logged-in user (from JWT token)
+  // currentPassword: The user's current password (plain text)
+  // newPassword: The new password the user wants to set (plain text)
+  async changePassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    // Step 1: Find the user by ID in the database
+    // We need to get the user's current hashed password to verify
+    const user = await this.userRepository.findOne({
+      where: { id: userId }, // WHERE id = userId (from JWT)
+    });
+
+    // Step 2: Check if user exists (should always exist if JWT is valid)
+    // This is a safety check in case the user was deleted
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    // Step 3: Verify the current password is correct
+    // bcrypt.compare() checks if the provided current password
+    // matches the hashed password stored in the database
+    const isCurrentPasswordValid = await bcrypt.compare(
+      currentPassword, // Plain text password from request
+      user.password, // Hashed password from database
+    );
+
+    // Step 4: If current password is wrong, throw BadRequestException
+    // We use 400 Bad Request (not 401) because the user IS authenticated
+    // but they provided an incorrect current password
+    if (!isCurrentPasswordValid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    // Step 5: Hash the new password before storing
+    // bcrypt.hash() creates a secure hash of the new password
+    // 10 is the "salt rounds" - higher = more secure but slower
+    // 10 is a good balance between security and performance
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+    // Step 6: Update the user's password in the database
+    // userRepository.update() updates the record with the given ID
+    // First argument: the condition (which user to update)
+    // Second argument: the new values to set
+    await this.userRepository.update(
+      { id: userId }, // WHERE id = userId
+      { password: hashedNewPassword }, // SET password = hashedNewPassword
+    );
+
+    // Step 7: Return success message
+    // Password has been changed successfully
+    return {
+      message: 'Password changed successfully',
     };
   }
 }
