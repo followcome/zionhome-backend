@@ -29,9 +29,26 @@ export class AuthController {
     // The service handles:
     // - Finding the user
     // - Checking the password
-    // - Generating the JWT token
+    // - Generating BOTH access token and refresh token
+    // - Storing hashed refresh token in database
     // - Throwing errors if login fails
     return this.authService.login(body.email, body.password);
+  }
+
+  // @Post('refresh') creates a POST endpoint at /auth/refresh
+  // This endpoint exchanges a refresh token for new tokens
+  // NO guard needed - we validate the refresh token manually
+  @Post('refresh')
+  async refresh(@Body() body: { refresh_token: string }) {
+    // Call the AuthService refresh method
+    // The service handles:
+    // - Finding the user by their refresh token
+    // - Validating the refresh token
+    // - Generating NEW access token
+    // - Generating NEW refresh token (rotation)
+    // - Invalidating the old refresh token
+    // - Returning the new tokens
+    return this.authService.refresh(body.refresh_token);
   }
 
   // @UseGuards(JwtAuthGuard) protects this route

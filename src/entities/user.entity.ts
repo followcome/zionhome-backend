@@ -20,5 +20,13 @@ export class User {
   // This will be: password VARCHAR(255) NOT NULL
   @Column()
   password: string;
-}
 
+  // Refresh token column to store the hashed refresh token
+  // { nullable: true } means this column can be NULL (empty)
+  // { type: 'varchar' } explicitly tells TypeORM this is a string column
+  // When user logs in, we store their refresh token here
+  // When they log out or token is rotated, old token is replaced
+  // This will be: refresh_token VARCHAR(255) NULL
+  @Column({ type: 'varchar', nullable: true })
+  refreshToken: string;
+}
