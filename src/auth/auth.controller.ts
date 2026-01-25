@@ -6,6 +6,10 @@
 // Request - gives access to the full request object (includes user info)
 import { Controller, Post, Body, UseGuards, Request } from '@nestjs/common';
 
+// Import ThrottlerGuard from @nestjs/throttler
+// This guard enforces rate limiting on endpoints
+import { ThrottlerGuard } from '@nestjs/throttler';
+
 // Import our AuthService to use its methods
 import { AuthService } from './auth.service';
 
@@ -20,6 +24,11 @@ export class AuthController {
   // This is called "Dependency Injection"
   constructor(private readonly authService: AuthService) {}
 
+  // @UseGuards(ThrottlerGuard) applies rate limiting to this endpoint
+  // This prevents brute force attacks by limiting login attempts
+  // Default: 5 requests per minute per IP address
+  // If exceeded, returns 429 Too Many Requests
+  @UseGuards(ThrottlerGuard)
   // @Post('login') creates a POST endpoint at /auth/login
   // POST is used because we're sending sensitive data (password)
   // @Body() extracts the JSON data sent in the request
