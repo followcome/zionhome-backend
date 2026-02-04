@@ -7,6 +7,10 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 // Import TypeOrmModule to connect to PostgreSQL
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+// Import ThrottlerModule for rate limiting
+// This prevents brute force attacks by limiting requests per time window
+import { ThrottlerModule } from '@nestjs/throttler';
+
 // Import the User entity we created
 import { User } from './entities/user.entity';
 
@@ -25,6 +29,26 @@ import { AuthModule } from './auth/auth.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+
+    // ThrottlerModule.forRoot() configures rate limiting globally
+    // This protects all endpoints from too many requests
+    ThrottlerModule.forRoot([
+      {
+        // name: Identifier for this throttle configuration
+        // You can have multiple configurations with different names
+        name: 'default',
+
+        // ttl: Time To Live - the time window in milliseconds
+        // 60000 = 60 seconds = 1 minute
+        // This means the limit resets every minute
+        ttl: 60000,
+
+        // limit: Maximum number of requests allowed in the time window
+        // 5 requests per minute per IP address
+        // This prevents brute force attacks on login
+        limit: 5,
+      },
+    ]),
 
     // TypeOrmModule.forRootAsync() sets up database connection
     // We use Async version to access ConfigService for environment variables
