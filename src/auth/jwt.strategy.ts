@@ -17,6 +17,7 @@ import { ConfigService } from '@nestjs/config';
 interface JwtPayload {
   sub: number; // User ID (subject)
   email: string; // User's email
+  role: string; // User's role (admin or employee)
 }
 
 // @Injectable() makes this class available for dependency injection
@@ -62,6 +63,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       id: payload.sub, // User ID from the token
       email: payload.email, // User email from the token
+      role: payload.role, // User role from the token (admin or employee)
     };
   }
 }

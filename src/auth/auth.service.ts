@@ -77,52 +77,83 @@ export class AuthService {
       where: { email }, // WHERE email = 'provided email'
     });
 
-    // Step 2: Check if user exists
-    // If no user found with this email, throw an error
+    // Step 2: If no user found, still return generic error
+    // (We can't increment attempts because no account exists)
     if (!user) {
-      // UnauthorizedException returns HTTP 401 status
-      // Message tells the client what went wrong
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Step 3: Compare the provided password with stored hashed password
+    // Step 3: Check if account is already locked
+    if (user.isLocked) {
+      throw new UnauthorizedException(
+        'Account locked. Please reset your password.',
+      );
+    }
+
+    // Step 4: Compare the provided password with stored hashed password
     // bcrypt.compare() returns true if passwords match, false otherwise
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
-    // Step 4: Check if password is correct
-    // If passwords don't match, throw an error
+    // Step 5: Handle invalid password (increment attempts and possibly lock)
     if (!isPasswordValid) {
-      // Same error message as "user not found" for security
+      const attempts = (user.failedAttempts ?? 0) + 1;
+      const shouldLock = attempts >= 5;
+
+      await this.userRepository.update(
+        { id: user.id },
+        {
+          failedAttempts: attempts,
+          isLocked: shouldLock,
+        },
+      );
+
+      // If limit reached, inform user account is locked
+      if (shouldLock) {
+        throw new UnauthorizedException(
+          'Account locked. Please reset your password.',
+        );
+      }
+
+      // Otherwise, generic invalid credentials
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Step 5: Create JWT payload for access token
+    // Step 6: Password is correct — reset failed attempts and lock flag
+    if (user.failedAttempts !== 0 || user.isLocked) {
+      await this.userRepository.update(
+        { id: user.id },
+        { failedAttempts: 0, isLocked: false },
+      );
+    }
+
+    // Step 7: Create JWT payload for access token
     // Payload is the data stored inside the token
     const payload = {
       sub: user.id, // 'sub' is standard JWT claim for subject (user ID)
       email: user.email, // Include email for convenience
+      role: user.role || 'employee', // Include role (admin or employee) for authorization
     };
 
-    // Step 6: Generate the access token (short-lived, e.g., 15 minutes)
+    // Step 8: Generate the access token (short-lived, e.g., 15 minutes)
     // This token is used for API authentication
     const accessToken = this.jwtService.sign(payload);
 
-    // Step 7: Generate a random refresh token (long-lived)
+    // Step 9: Generate a random refresh token (long-lived)
     // This token is used to get new access tokens
     const refreshToken = this.generateRefreshToken();
 
-    // Step 8: Hash the refresh token before storing in database
+    // Step 10: Hash the refresh token before storing in database
     // We never store plain refresh tokens for security
     const hashedRefreshToken = await this.hashRefreshToken(refreshToken);
 
-    // Step 9: Save the hashed refresh token to the user's record
+    // Step 11: Save the hashed refresh token to the user's record
     // This links the refresh token to this specific user
     await this.userRepository.update(
       { id: user.id }, // WHERE id = user.id
       { refreshToken: hashedRefreshToken }, // SET refreshToken = hashed value
     );
 
-    // Step 10: Return both tokens and user info
+    // Step 12: Return both tokens and user info
     // Client stores these and uses accessToken for API calls
     // When accessToken expires, client uses refreshToken to get new ones
     return {
@@ -178,6 +209,7 @@ export class AuthService {
     const payload = {
       sub: matchedUser.id,
       email: matchedUser.email,
+      role: matchedUser.role || 'employee', // Include role in new access token
     };
     const newAccessToken = this.jwtService.sign(payload);
 

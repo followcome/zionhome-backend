@@ -21,6 +21,9 @@ import { AppService } from './app.service';
 // Import AuthModule for authentication features
 import { AuthModule } from './auth/auth.module';
 
+// Import AdminModule for admin routes
+import { AdminModule } from './admin/admin.module';
+
 // @Module() defines this class as a NestJS module
 @Module({
   imports: [
@@ -80,6 +83,9 @@ import { AuthModule } from './auth/auth.module';
 
     // AuthModule contains authentication-related features (login, etc.)
     AuthModule,
+
+    // AdminModule contains admin-only routes (protected by AdminGuard)
+    AdminModule,
   ],
 
   // Controllers handle incoming HTTP requests
