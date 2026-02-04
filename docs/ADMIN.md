@@ -32,6 +32,9 @@ Only users with the `admin` role are authorized to access these endpoints.
 | Employees | Manage employee records and roles |
 | Settings | Manage system configuration |
 | Logout | Secure admin logout |
+| Attendance | View and generate attendance reports |
+| Leave | Manage employee leave and approvals |
+
 
 ---
 
@@ -113,3 +116,50 @@ Securely logs out the admin user.
 
 ---
 
+## 4. Attendance Management
+
+### GET `/admin/attendance`
+View employee attendance records.
+
+### GET `/admin/attendance/reports`
+Generate attendance reports.
+
+---
+
+## 5. Leave Management (Admin)
+
+The admin manages employee leave allocation and approvals.
+
+### POST `/admin/leaves/allocate`
+
+Allocate leave days to an employee.
+
+```json
+{
+  "employee_id": 12,
+  "total_leave_days": 20,
+  "year": 2026
+}
+```
+
+---
+
+### GET `/admin/leaves/requests`
+
+View all leave requests submitted by employees.
+
+---
+
+### PUT `/admin/leaves/requests/{request_id}/approve`
+
+Approve a leave request.
+
+---
+
+### PUT `/admin/leaves/requests/{request_id}/deny`
+
+Deny a leave request.
+
+<!-- There is a one more route that should be on leave but I am yet to resolve its structure. -->
+
+---
