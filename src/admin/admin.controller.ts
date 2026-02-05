@@ -118,6 +118,122 @@ export class AdminController {
     // req.user contains admin user info from JWT token
     return { message: 'Admin logged out successfully' };
   }
+
+  // ============================================
+  // ATTENDANCE MANAGEMENT ROUTES
+  // ============================================
+  // Documentation Reference: docs/ADMIN.md Section 4
+
+  /**
+   * GET /admin/attendance
+   * View employee attendance records.
+   *
+   * Documentation states: "View employee attendance records."
+   * TODO: Documentation does not specify:
+   *   - Query parameters (e.g., filters by employee_id, date range, pagination)
+   *   - Response body structure
+   *   - Attendance record entity/model structure
+   */
+  @Get('attendance')
+  async getAttendance() {
+    // Delegates to service layer for business logic
+    return this.adminService.getAttendance();
+  }
+
+  /**
+   * GET /admin/attendance/reports
+   * Generate attendance reports.
+   *
+   * Documentation states: "Generate attendance reports."
+   * TODO: Documentation does not specify:
+   *   - Query parameters (e.g., report type, date range, department)
+   *   - Response body structure (e.g., summary stats, detailed records, file download)
+   *   - Report format (JSON, CSV, PDF, etc.)
+   */
+  @Get('attendance/reports')
+  async getAttendanceReports() {
+    // Delegates to service layer for business logic
+    return this.adminService.getAttendanceReports();
+  }
+
+  // ============================================
+  // LEAVE MANAGEMENT ROUTES (ADMIN)
+  // ============================================
+  // Documentation Reference: docs/ADMIN.md Section 5
+  // "The admin manages employee leave allocation and approvals."
+
+  /**
+   * POST /admin/leaves/allocate
+   * Allocate leave days to an employee.
+   *
+   * Request Body (as documented):
+   * {
+   *   "employee_id": 12,
+   *   "total_leave_days": 20,
+   *   "year": 2026
+   * }
+   *
+   * TODO: Documentation does not specify:
+   *   - Response body structure on success
+   *   - Error responses (e.g., employee not found, invalid year)
+   *   - Whether this creates new allocation or updates existing
+   *   - Leave type differentiation (if any)
+   */
+  @Post('leaves/allocate')
+  async allocateLeave(
+    @Body() body: { employee_id: number; total_leave_days: number; year: number },
+  ) {
+    // Delegates to service layer for business logic
+    return this.adminService.allocateLeave(body);
+  }
+
+  /**
+   * GET /admin/leaves/requests
+   * View all leave requests submitted by employees.
+   *
+   * Documentation states: "View all leave requests submitted by employees."
+   * TODO: Documentation does not specify:
+   *   - Query parameters (e.g., status filter, employee_id, date range, pagination)
+   *   - Response body structure
+   *   - Leave request entity/model structure
+   */
+  @Get('leaves/requests')
+  async getLeaveRequests() {
+    // Delegates to service layer for business logic
+    return this.adminService.getLeaveRequests();
+  }
+
+  /**
+   * PUT /admin/leaves/requests/:request_id/approve
+   * Approve a leave request.
+   *
+   * Documentation states: "Approve a leave request."
+   * TODO: Documentation does not specify:
+   *   - Request body (e.g., approval notes, partial approval)
+   *   - Response body structure
+   *   - Side effects (e.g., notification to employee, leave balance deduction)
+   */
+  @Put('leaves/requests/:request_id/approve')
+  async approveLeaveRequest(@Param('request_id') requestId: string) {
+    // Delegates to service layer for business logic
+    return this.adminService.approveLeaveRequest(requestId);
+  }
+
+  /**
+   * PUT /admin/leaves/requests/:request_id/deny
+   * Deny a leave request.
+   *
+   * Documentation states: "Deny a leave request."
+   * TODO: Documentation does not specify:
+   *   - Request body (e.g., denial reason - often required for audit)
+   *   - Response body structure
+   *   - Side effects (e.g., notification to employee)
+   */
+  @Put('leaves/requests/:request_id/deny')
+  async denyLeaveRequest(@Param('request_id') requestId: string) {
+    // Delegates to service layer for business logic
+    return this.adminService.denyLeaveRequest(requestId);
+  }
 }
 
 
