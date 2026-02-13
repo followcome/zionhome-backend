@@ -13,6 +13,7 @@ import {
   Request,
   Param,
   Body,
+  Query,
 } from '@nestjs/common';
 
 // Import AdminGuard to protect all admin routes
@@ -21,6 +22,9 @@ import { AdminGuard } from './admin.guard';
 
 // Import AdminService for business logic (currently empty)
 import { AdminService } from './admin.service';
+
+// Import DTOs for type safety
+import { LeaveCalendarQueryDto } from './dto';
 
 // @Controller('admin') means all routes in this controller start with /admin
 // So the full URL will be: http://localhost:PORT/admin/...
@@ -233,6 +237,30 @@ export class AdminController {
   async denyLeaveRequest(@Param('request_id') requestId: string) {
     // Delegates to service layer for business logic
     return this.adminService.denyLeaveRequest(requestId);
+  }
+
+  /**
+   * GET /admin/leaves/calendar
+   * Fetch employees on leave.
+   *
+   * Documentation Reference: docs/ADMIN.md Section 5
+   *
+   * Query Parameters (LeaveCalendarQueryDto):
+   * - year (optional): The year to fetch leave calendar for (e.g., 2026)
+   * - month (optional): The month of the year, 1-12 (e.g., 3 for March)
+   * - employee_id (optional): Filter by specific employee
+   *
+   * Behavior (as documented):
+   * - If employee_id is not supplied, fetches all employees on leave in given month
+   * - If employee_id is supplied, fetches only that employee's leave information
+   * - If month, year, and employee_id are not supplied, defaults to current month/year
+   *   (default logic to be implemented later)
+   */
+  @Get('leaves/calendar')
+  async getLeaveCalendar(@Query() query: LeaveCalendarQueryDto) {
+    // TODO: Implement leave calendar logic in service layer
+    // Default to current month/year when no parameters provided (logic TBD)
+    return { message: 'Leave calendar route created successfully' };
   }
 }
 
