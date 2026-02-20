@@ -65,7 +65,7 @@ Fetch system summary statistics.
 ### POST `/admin/employees`
 Add a new employee.
 
-### PUT `/admin/employees/{employee_id}`
+### PATCH `/admin/employees/{employee_id}`
 Update employee details.
 
 ### DELETE `/admin/employees/{employee_id}`
@@ -102,10 +102,10 @@ Allocate leave days for a specific year.
 ### GET `/admin/leaves/requests`
 View leave requests.
 
-### PUT `/admin/leaves/requests/{request_id}/approve`
+### PATCH `/admin/leaves/requests/{request_id}/approve`
 Approve leave request.
 
-### PUT `/admin/leaves/requests/{request_id}/deny`
+### PATCH `/admin/leaves/requests/{request_id}/deny`
 Deny leave request.
 
 ### GET `/admin/leaves/calendar`
@@ -125,7 +125,7 @@ employee_id=12
 ### POST `/admin/salaries`
 Create salary structure.
 
-### PUT `/admin/salaries/{salary_id}`
+### PATCH `/admin/salaries/{salary_id}`
 Update salary structure.
 
 ### GET `/admin/salaries/{employee_id}`
@@ -249,7 +249,7 @@ Add new asset.
 }
 ```
 
-### PUT `/admin/assets/{asset_id}`
+### PATCH `/admin/assets/{asset_id}`
 Update asset details.
 
 ### POST `/admin/assets/{asset_id}/assign`
@@ -271,7 +271,7 @@ Delete asset record.
 ### GET `/admin/settings`
 View system settings.
 
-### PUT `/admin/settings`
+### PATCH `/admin/settings`
 Update system settings.
 
 ### GET `/admin/settings/roles`
