@@ -1,6 +1,10 @@
 // DTO barrel file - exports all DTOs for clean imports
 // Usage: import { CreateSalaryDto, UpdateSalaryDto } from './dto';
 
+// Employee Management DTOs
+export * from './create-employee.dto';
+export * from './update-employee.dto';
+
 // Leave Management DTOs
 export * from './leave-calendar-query.dto';
 

@@ -75,9 +75,14 @@ import { AdminModule } from './admin/admin.module';
         // entities: [User] tells TypeORM which classes represent database tables
         entities: [User],
 
-        // synchronize: true automatically creates/updates tables based on entities
-        // WARNING: Only use in development! In production, use migrations instead
-        synchronize: true,
+        // synchronize: false - we use migrations instead of auto-sync
+        // Auto-sync can cause data loss in production
+        // Migrations give us control over schema changes
+        synchronize: false,
+
+        // Enable migrations
+        migrations: ['dist/migrations/*.js'],
+        migrationsRun: false, // Don't auto-run migrations on startup
       }),
     }),
 

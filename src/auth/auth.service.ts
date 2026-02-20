@@ -72,15 +72,25 @@ export class AuthService {
     user: { id: number; email: string };
   }> {
     // Step 1: Find user by email in the database
-    // findOne() returns the user if found, or null if not found
+    // withDeleted: true allows us to find soft-deleted users so we can
+    // give them a proper error message instead of "invalid email"
     const user = await this.userRepository.findOne({
       where: { email }, // WHERE email = 'provided email'
+      withDeleted: true, // Include soft-deleted users in the search
     });
 
     // Step 2: If no user found, still return generic error
     // (We can't increment attempts because no account exists)
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // Step 2.5: Check if account has been soft deleted (deactivated)
+    // deletedAt will have a timestamp if the user was deactivated
+    if (user.deletedAt) {
+      throw new UnauthorizedException(
+        'Your account has been deactivated. Please contact an administrator.',
+      );
     }
 
     // Step 3: Check if account is already locked

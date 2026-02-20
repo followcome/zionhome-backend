@@ -1,5 +1,6 @@
 // Import decorators from TypeORM library
-import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+// DeleteDateColumn is used for soft delete - stores when record was "deleted"
+import { Entity, PrimaryGeneratedColumn, Column, DeleteDateColumn } from 'typeorm';
 
 // @Entity() tells TypeORM this class represents a database table
 // The table will be named 'users' (lowercase, plural by convention)
@@ -20,6 +21,16 @@ export class User {
   // This will be: password VARCHAR(255) NOT NULL
   @Column()
   password: string;
+
+  // First name of the user
+  // { nullable: true } for backward compatibility with existing records
+  @Column({ type: 'varchar', nullable: true })
+  firstName: string;
+
+  // Last name of the user
+  // { nullable: true } for backward compatibility with existing records
+  @Column({ type: 'varchar', nullable: true })
+  lastName: string;
 
   // Failed login attempts (increments on every failed login)
   // Does NOT reset with time; resets only on successful login or password reset
@@ -46,4 +57,14 @@ export class User {
   // This will be: role VARCHAR(255) DEFAULT 'employee'
   @Column({ type: 'varchar', default: 'employee' })
   role: string;
+
+  // Soft delete column - stores when the user was "deleted"
+  // @DeleteDateColumn() is a special TypeORM decorator for soft deletes
+  // - When null: user is active
+  // - When has a date: user has been soft deleted (deactivated)
+  // TypeORM automatically:
+  // - Sets this to current timestamp when softDelete() or softRemove() is called
+  // - Excludes soft-deleted records from find() queries by default
+  @DeleteDateColumn({ type: 'timestamp', nullable: true })
+  deletedAt: Date | null;
 }

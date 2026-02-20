@@ -8,6 +8,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   UseGuards,
   Request,
@@ -24,7 +25,7 @@ import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
 
 // Import DTOs for type safety
-import { LeaveCalendarQueryDto } from './dto';
+import { CreateEmployeeDto, UpdateEmployeeDto, LeaveCalendarQueryDto } from './dto';
 
 // @Controller('admin') means all routes in this controller start with /admin
 // So the full URL will be: http://localhost:PORT/admin/...
@@ -42,28 +43,81 @@ export class AdminController {
   // EMPLOYEE MANAGEMENT ROUTES
   // ============================================
 
-  // POST /admin/employees - Add a new employee
-  // Placeholder - no implementation yet (as per requirements)
+  /**
+   * POST /admin/employees
+   * Add a new employee to the system.
+   *
+   * Request Body (CreateEmployeeDto):
+   * {
+   *   "email": "employee@example.com",
+   *   "password": "securePassword123",
+   *   "first_name": "John",
+   *   "last_name": "Doe"
+   * }
+   *
+   * Returns: Created employee object (without password)
+   * Throws: BadRequestException if email already exists
+   */
   @Post('employees')
-  async createEmployee(@Body() body: any) {
-    // TODO: Implement employee creation logic
-    return { message: 'Employee creation endpoint - not implemented yet' };
+  async createEmployee(@Body() createEmployeeDto: CreateEmployeeDto) {
+    // Delegates to service layer which handles:
+    // 1. Email uniqueness validation
+    // 2. Password hashing with bcrypt
+    // 3. Creating user with role forced to 'employee'
+    // 4. Returning employee without password field
+    return this.adminService.createEmployee(createEmployeeDto);
   }
 
-  // PUT /admin/employees/:id - Update employee details
-  // Placeholder - no implementation yet
-  @Put('employees/:id')
-  async updateEmployee(@Param('id') id: string, @Body() body: any) {
-    // TODO: Implement employee update logic
-    return { message: 'Employee update endpoint - not implemented yet' };
+  /**
+   * PATCH /admin/employees/:id
+   * Update an employee's details (partial update).
+   *
+   * @param id - The employee's user ID
+   * @param updateEmployeeDto - Fields to update (all optional):
+   *   - firstName: Employee's first name
+   *   - lastName: Employee's last name
+   *   - email: Employee's email (checked for uniqueness)
+   *   - role: Employee's role ('employee' or 'admin')
+   *   - isLocked: Lock status (true = cannot login)
+   *
+   * Note: Password cannot be updated through this endpoint
+   *
+   * @returns Updated employee object (without password)
+   * @throws NotFoundException if employee doesn't exist
+   * @throws BadRequestException if new email is already taken
+   */
+  @Patch('employees/:id')
+  async updateEmployee(
+    @Param('id') id: string,
+    @Body() updateEmployeeDto: UpdateEmployeeDto,
+  ) {
+    // Delegates to service layer which handles:
+    // 1. Checking employee exists
+    // 2. Email uniqueness validation (if email is being changed)
+    // 3. Partial update using TypeORM
+    // 4. Returning updated employee without password
+    return this.adminService.updateEmployee(id, updateEmployeeDto);
   }
 
-  // DELETE /admin/employees/:id - Deactivate or delete employee
-  // Placeholder - no implementation yet
+  /**
+   * DELETE /admin/employees/:id
+   * Soft delete (deactivate) an employee.
+   *
+   * This sets the deletedAt timestamp instead of permanently removing the record.
+   * Deactivated employees cannot login and are excluded from employee lists.
+   *
+   * Rules:
+   * - Employee must exist
+   * - Cannot deactivate admin users (only employees)
+   *
+   * @param id - The employee's user ID
+   * @returns Success message confirming deactivation
+   * @throws NotFoundException if employee doesn't exist
+   * @throws BadRequestException if trying to delete an admin user
+   */
   @Delete('employees/:id')
   async deleteEmployee(@Param('id') id: string) {
-    // TODO: Implement employee deletion logic
-    return { message: 'Employee deletion endpoint - not implemented yet' };
+    return this.adminService.softDeleteEmployee(id);
   }
 
   // POST /admin/employees/:id/roles - Assign roles to employee
