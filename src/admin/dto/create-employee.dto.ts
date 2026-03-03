@@ -13,8 +13,8 @@ export class CreateEmployeeDto {
   password: string;
 
   // Employee's first name
-  first_name: string;
+  firstName: string;
 
   // Employee's last name
-  last_name: string;
+  lastName: string;
 }

@@ -7,7 +7,6 @@ import {
   Controller,
   Get,
   Post,
-  Put,
   Patch,
   Delete,
   UseGuards,
@@ -40,8 +39,44 @@ export class AdminController {
   constructor(private readonly adminService: AdminService) {}
 
   // ============================================
+  // DASHBOARD ROUTE
+  // ============================================
+
+  /**
+   * GET /admin/dashboard
+   * Fetch system summary statistics.
+   *
+   * Includes: Total employees, employees on leave, attendance summary,
+   * monthly payroll total, total assets, recent procurements, outstanding bills.
+   */
+  @Get('dashboard')
+  async getDashboard() {
+    return this.adminService.getDashboard();
+  }
+
+  // ============================================
   // EMPLOYEE MANAGEMENT ROUTES
   // ============================================
+
+  /**
+   * GET /admin/employees
+   * Get all employees.
+   */
+  @Get('employees')
+  async getAllEmployees() {
+    return this.adminService.getAllEmployees();
+  }
+
+  /**
+   * GET /admin/employees/:id
+   * Get a single employee by ID.
+   *
+   * @param id - The employee's user ID
+   */
+  @Get('employees/:id')
+  async getEmployeeById(@Param('id') id: string) {
+    return this.adminService.getEmployeeById(id);
+  }
 
   /**
    * POST /admin/employees
@@ -120,12 +155,19 @@ export class AdminController {
     return this.adminService.softDeleteEmployee(id);
   }
 
-  // POST /admin/employees/:id/roles - Assign roles to employee
-  // Placeholder - no implementation yet
+  /**
+   * POST /admin/employees/:id/roles
+   * Assign a role to an employee.
+   *
+   * @param id - The employee's user ID
+   * @param body - Request body containing: { role: string }
+   * @returns Updated employee object (without password and refreshToken)
+   * @throws NotFoundException if employee doesn't exist or is soft-deleted
+   * @throws BadRequestException if trying to assign 'admin' role
+   */
   @Post('employees/:id/roles')
-  async assignRoles(@Param('id') id: string, @Body() body: any) {
-    // TODO: Implement role assignment logic
-    return { message: 'Role assignment endpoint - not implemented yet' };
+  async assignRoles(@Param('id') id: string, @Body() body: { role: string }) {
+    return this.adminService.assignRole(id, body.role);
   }
 
   // ============================================
@@ -140,9 +182,9 @@ export class AdminController {
     return { message: 'Get settings endpoint - not implemented yet' };
   }
 
-  // PUT /admin/settings - Update system settings
+  // PATCH /admin/settings - Update system settings
   // Placeholder - no implementation yet
-  @Put('settings')
+  @Patch('settings')
   async updateSettings(@Body() body: any) {
     // TODO: Implement settings update logic
     return { message: 'Update settings endpoint - not implemented yet' };
@@ -186,32 +228,68 @@ export class AdminController {
    * GET /admin/attendance
    * View employee attendance records.
    *
-   * Documentation states: "View employee attendance records."
-   * TODO: Documentation does not specify:
-   *   - Query parameters (e.g., filters by employee_id, date range, pagination)
-   *   - Response body structure
-   *   - Attendance record entity/model structure
+   * Query Parameters (all optional):
+   * - date: Filter by specific date (YYYY-MM-DD format)
+   * - employeeId: Filter by specific employee ID
+   * - month: Filter by month (1-12)
+   * - year: Filter by year
+   *
+   * Returns: Array of attendance records with employee details
+   * Results are ordered by date descending (newest first)
+   * Every record means the employee was present that day
    */
   @Get('attendance')
-  async getAttendance() {
+  async getAttendance(
+    @Query('date') date?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    // Build filters object, converting string params to numbers where needed
+    const filters = {
+      date: date,
+      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    };
+
     // Delegates to service layer for business logic
-    return this.adminService.getAttendance();
+    return this.adminService.getAttendance(filters);
   }
 
   /**
    * GET /admin/attendance/reports
    * Generate attendance reports.
    *
-   * Documentation states: "Generate attendance reports."
-   * TODO: Documentation does not specify:
-   *   - Query parameters (e.g., report type, date range, department)
-   *   - Response body structure (e.g., summary stats, detailed records, file download)
-   *   - Report format (JSON, CSV, PDF, etc.)
+   * Query Parameters (all optional):
+   * - month: Month number (1-12), defaults to current month
+   * - year: Year number, defaults to current year
+   * - employeeId: Generate report for specific employee only
+   *
+   * Returns: Attendance report with per-employee summary including:
+   * - presentDays: days marked attendance
+   * - onLeaveDays: days on approved leave
+   * - absentDays: working days not present and not on leave
+   * - attendancePercentage: (presentDays / workingDays) * 100
+   *
+   * Working days exclude Saturdays and Sundays
+   * Results sorted by attendancePercentage descending (best first)
    */
   @Get('attendance/reports')
-  async getAttendanceReports() {
+  async getAttendanceReports(
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+    @Query('employeeId') employeeId?: string,
+  ) {
+    // Build filters object, converting string params to numbers where needed
+    const filters = {
+      month: month ? parseInt(month, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+    };
+
     // Delegates to service layer for business logic
-    return this.adminService.getAttendanceReports();
+    return this.adminService.getAttendanceReports(filters);
   }
 
   // ============================================
@@ -224,22 +302,22 @@ export class AdminController {
    * POST /admin/leaves/allocate
    * Allocate leave days to an employee.
    *
-   * Request Body (as documented):
+   * Request Body (camelCase):
    * {
-   *   "employee_id": 12,
-   *   "total_leave_days": 20,
+   *   "employeeId": 12,
+   *   "totalLeaveDays": 20,
    *   "year": 2026
    * }
    *
-   * TODO: Documentation does not specify:
-   *   - Response body structure on success
-   *   - Error responses (e.g., employee not found, invalid year)
-   *   - Whether this creates new allocation or updates existing
-   *   - Leave type differentiation (if any)
+   * Returns: Created allocation with employee details (without password/refreshToken)
+   * Throws:
+   *   - NotFoundException (404) if employee doesn't exist
+   *   - BadRequestException (400) if employeeId belongs to an admin
+   *   - BadRequestException (400) if allocation already exists for this employee and year
    */
   @Post('leaves/allocate')
   async allocateLeave(
-    @Body() body: { employee_id: number; total_leave_days: number; year: number },
+    @Body() body: { employeeId: number; totalLeaveDays: number; year: number },
   ) {
     // Delegates to service layer for business logic
     return this.adminService.allocateLeave(body);
@@ -249,48 +327,81 @@ export class AdminController {
    * GET /admin/leaves/requests
    * View all leave requests submitted by employees.
    *
-   * Documentation states: "View all leave requests submitted by employees."
-   * TODO: Documentation does not specify:
-   *   - Query parameters (e.g., status filter, employee_id, date range, pagination)
-   *   - Response body structure
-   *   - Leave request entity/model structure
+   * Query Parameters (all optional):
+   * - status: Filter by 'pending', 'approved', or 'denied'
+   * - employeeId: Filter by specific employee ID
+   * - year: Filter by year based on the startDate
+   *
+   * Returns: Array of leave requests with employee details (without password/refreshToken)
+   * Results are ordered by createdAt descending (newest first)
+   * Soft-deleted employees are excluded from results
    */
   @Get('leaves/requests')
-  async getLeaveRequests() {
+  async getLeaveRequests(
+    @Query('status') status?: string,
+    @Query('employeeId') employeeId?: string,
+    @Query('year') year?: string,
+  ) {
+    // Build filters object, converting string params to numbers where needed
+    // Query parameters come as strings from the URL, so we parse them
+    const filters = {
+      status: status,
+      employeeId: employeeId ? parseInt(employeeId, 10) : undefined,
+      year: year ? parseInt(year, 10) : undefined,
+    };
+
     // Delegates to service layer for business logic
-    return this.adminService.getLeaveRequests();
+    return this.adminService.getLeaveRequests(filters);
   }
 
   /**
-   * PUT /admin/leaves/requests/:request_id/approve
+   * PATCH /admin/leaves/requests/:request_id/approve
    * Approve a leave request.
    *
-   * Documentation states: "Approve a leave request."
-   * TODO: Documentation does not specify:
-   *   - Request body (e.g., approval notes, partial approval)
-   *   - Response body structure
-   *   - Side effects (e.g., notification to employee, leave balance deduction)
+   * Performs all of the following in one operation:
+   * - Updates leave request status to 'approved'
+   * - Sets reviewedBy to the current admin's user ID
+   * - Sets reviewedAt to current timestamp
+   * - Deducts numberOfDays from employee's leave allocation (remainingDays)
+   * - Increases usedDays in employee's leave allocation
+   *
+   * Throws:
+   *   - NotFoundException (404) if leave request doesn't exist
+   *   - BadRequestException (400) if request is already approved/denied
+   *   - BadRequestException (400) if employee has no allocation for that year
+   *   - BadRequestException (400) if employee doesn't have enough remaining days
    */
-  @Put('leaves/requests/:request_id/approve')
-  async approveLeaveRequest(@Param('request_id') requestId: string) {
-    // Delegates to service layer for business logic
-    return this.adminService.approveLeaveRequest(requestId);
+  @Patch('leaves/requests/:request_id/approve')
+  async approveLeaveRequest(
+    @Param('request_id') requestId: string,
+    @Request() req: { user: { id: number; email: string; role: string } },
+  ) {
+    // Pass the admin's user ID from JWT token to the service
+    // req.user is populated by the JwtStrategy after token validation
+    return this.adminService.approveLeaveRequest(requestId, req.user.id);
   }
 
   /**
-   * PUT /admin/leaves/requests/:request_id/deny
+   * PATCH /admin/leaves/requests/:request_id/deny
    * Deny a leave request.
    *
-   * Documentation states: "Deny a leave request."
-   * TODO: Documentation does not specify:
-   *   - Request body (e.g., denial reason - often required for audit)
-   *   - Response body structure
-   *   - Side effects (e.g., notification to employee)
+   * Performs all of the following in one operation:
+   * - Updates leave request status to 'denied'
+   * - Sets reviewedBy to the current admin's user ID
+   * - Sets reviewedAt to current timestamp
+   * - Does NOT touch leave_allocations (no days deducted)
+   *
+   * Throws:
+   *   - NotFoundException (404) if leave request doesn't exist
+   *   - BadRequestException (400) if request is already approved/denied
    */
-  @Put('leaves/requests/:request_id/deny')
-  async denyLeaveRequest(@Param('request_id') requestId: string) {
-    // Delegates to service layer for business logic
-    return this.adminService.denyLeaveRequest(requestId);
+  @Patch('leaves/requests/:request_id/deny')
+  async denyLeaveRequest(
+    @Param('request_id') requestId: string,
+    @Request() req: { user: { id: number; email: string; role: string } },
+  ) {
+    // Pass the admin's user ID from JWT token to the service
+    return this.adminService.denyLeaveRequest(requestId, req.user.id);
   }
 
   /**
@@ -312,9 +423,188 @@ export class AdminController {
    */
   @Get('leaves/calendar')
   async getLeaveCalendar(@Query() query: LeaveCalendarQueryDto) {
-    // TODO: Implement leave calendar logic in service layer
-    // Default to current month/year when no parameters provided (logic TBD)
-    return { message: 'Leave calendar route created successfully' };
+    return this.adminService.getLeaveCalendar(query);
+  }
+
+  // ============================================
+  // PROCUREMENTS MANAGEMENT ROUTES
+  // ============================================
+
+  /**
+   * POST /admin/procurements
+   * Add new equipment procurement.
+   */
+  @Post('procurements')
+  async createProcurement(@Body() body: any) {
+    return this.adminService.createProcurement(body);
+  }
+
+  /**
+   * GET /admin/procurements
+   * Fetch all procurement records.
+   */
+  @Get('procurements')
+  async getAllProcurements() {
+    return this.adminService.getAllProcurements();
+  }
+
+  /**
+   * GET /admin/procurements/:procurement_id
+   * Fetch single procurement.
+   */
+  @Get('procurements/:procurement_id')
+  async getProcurementById(@Param('procurement_id') procurementId: string) {
+    return this.adminService.getProcurementById(procurementId);
+  }
+
+  /**
+   * DELETE /admin/procurements/:procurement_id
+   * Delete procurement record.
+   */
+  @Delete('procurements/:procurement_id')
+  async deleteProcurement(@Param('procurement_id') procurementId: string) {
+    return this.adminService.deleteProcurement(procurementId);
+  }
+
+  // ============================================
+  // BILLS MANAGEMENT ROUTES
+  // ============================================
+
+  /**
+   * POST /admin/bills
+   * Create new bill record.
+   */
+  @Post('bills')
+  async createBill(@Body() body: any) {
+    return this.adminService.createBill(body);
+  }
+
+  /**
+   * GET /admin/bills
+   * Fetch all bills.
+   */
+  @Get('bills')
+  async getAllBills() {
+    return this.adminService.getAllBills();
+  }
+
+  /**
+   * GET /admin/bills/:bill_id
+   * Fetch single bill.
+   */
+  @Get('bills/:bill_id')
+  async getBillById(@Param('bill_id') billId: string) {
+    return this.adminService.getBillById(billId);
+  }
+
+  /**
+   * DELETE /admin/bills/:bill_id
+   * Delete bill record.
+   */
+  @Delete('bills/:bill_id')
+  async deleteBill(@Param('bill_id') billId: string) {
+    return this.adminService.deleteBill(billId);
+  }
+
+  // ============================================
+  // DOCUMENTS MANAGEMENT ROUTES
+  // ============================================
+
+  /**
+   * POST /admin/documents
+   * Upload document.
+   */
+  @Post('documents')
+  async createDocument(@Body() body: any) {
+    return this.adminService.createDocument(body);
+  }
+
+  /**
+   * POST /admin/documents/:document_id/assign
+   * Assign document to employee.
+   */
+  @Post('documents/:document_id/assign')
+  async assignDocument(
+    @Param('document_id') documentId: string,
+    @Body() body: any,
+  ) {
+    return this.adminService.assignDocument(documentId, body);
+  }
+
+  /**
+   * GET /admin/documents
+   * Fetch all documents.
+   */
+  @Get('documents')
+  async getAllDocuments() {
+    return this.adminService.getAllDocuments();
+  }
+
+  /**
+   * DELETE /admin/documents/:document_id
+   * Delete document.
+   */
+  @Delete('documents/:document_id')
+  async deleteDocument(@Param('document_id') documentId: string) {
+    return this.adminService.deleteDocument(documentId);
+  }
+
+  // ============================================
+  // ASSETS MANAGEMENT ROUTES
+  // ============================================
+
+  /**
+   * POST /admin/assets
+   * Add new asset.
+   */
+  @Post('assets')
+  async createAsset(@Body() body: any) {
+    return this.adminService.createAsset(body);
+  }
+
+  /**
+   * PATCH /admin/assets/:asset_id
+   * Update asset details.
+   */
+  @Patch('assets/:asset_id')
+  async updateAsset(@Param('asset_id') assetId: string, @Body() body: any) {
+    return this.adminService.updateAsset(assetId, body);
+  }
+
+  /**
+   * POST /admin/assets/:asset_id/assign
+   * Assign asset to employee.
+   */
+  @Post('assets/:asset_id/assign')
+  async assignAsset(@Param('asset_id') assetId: string, @Body() body: any) {
+    return this.adminService.assignAsset(assetId, body);
+  }
+
+  /**
+   * GET /admin/assets
+   * Fetch all assets.
+   */
+  @Get('assets')
+  async getAllAssets() {
+    return this.adminService.getAllAssets();
+  }
+
+  /**
+   * GET /admin/assets/:asset_id
+   * Fetch single asset.
+   */
+  @Get('assets/:asset_id')
+  async getAssetById(@Param('asset_id') assetId: string) {
+    return this.adminService.getAssetById(assetId);
+  }
+
+  /**
+   * DELETE /admin/assets/:asset_id
+   * Delete asset record.
+   */
+  @Delete('assets/:asset_id')
+  async deleteAsset(@Param('asset_id') assetId: string) {
+    return this.adminService.deleteAsset(assetId);
   }
 }
 

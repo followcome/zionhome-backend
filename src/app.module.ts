@@ -14,6 +14,13 @@ import { ThrottlerModule } from '@nestjs/throttler';
 // Import the User entity we created
 import { User } from './entities/user.entity';
 
+// Import leave management entities
+import { LeaveAllocation } from './entities/leave-allocation.entity';
+import { LeaveRequest } from './entities/leave-request.entity';
+
+// Import Attendance entity for attendance tracking
+import { Attendance } from './entities/attendance.entity';
+
 // Import existing app components
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -72,8 +79,8 @@ import { AdminModule } from './admin/admin.module';
         password: configService.get<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE'),
 
-        // entities: [User] tells TypeORM which classes represent database tables
-        entities: [User],
+        // entities: tells TypeORM which classes represent database tables
+        entities: [User, LeaveAllocation, LeaveRequest, Attendance],
 
         // synchronize: false - we use migrations instead of auto-sync
         // Auto-sync can cause data loss in production

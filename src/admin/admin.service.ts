@@ -24,6 +24,15 @@ import * as bcrypt from 'bcrypt';
 // Import User entity - represents the users table in the database
 import { User } from '../entities/user.entity';
 
+// Import LeaveAllocation entity - represents the leave_allocations table
+import { LeaveAllocation } from '../entities/leave-allocation.entity';
+
+// Import LeaveRequest entity - represents the leave_requests table
+import { LeaveRequest } from '../entities/leave-request.entity';
+
+// Import Attendance entity - represents the attendances table
+import { Attendance } from '../entities/attendance.entity';
+
 // Import DTOs - define the shape of data for employee operations
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
 
@@ -37,6 +46,15 @@ export class AdminService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+
+    @InjectRepository(LeaveAllocation)
+    private readonly leaveAllocationRepository: Repository<LeaveAllocation>,
+
+    @InjectRepository(LeaveRequest)
+    private readonly leaveRequestRepository: Repository<LeaveRequest>,
+
+    @InjectRepository(Attendance)
+    private readonly attendanceRepository: Repository<Attendance>,
   ) {}
 
   // ============================================
@@ -60,7 +78,7 @@ export class AdminService {
   ): Promise<Omit<User, 'password'>> {
     // Step 1: Extract fields from the DTO
     // Destructuring makes the code cleaner and more readable
-    const { email, password, first_name, last_name } = createEmployeeDto;
+    const { email, password,firstName, lastName} = createEmployeeDto;
 
     // Step 2: Check if a user with this email already exists
     // findOne returns the user if found, or null if not found
@@ -85,8 +103,8 @@ export class AdminService {
     const newEmployee = this.userRepository.create({
       email,
       password: hashedPassword,
-      firstName: first_name,
-      lastName: last_name,
+      firstName,
+      lastName,
       role: 'employee', // Force role to 'employee' - never trust client input for roles
     });
 
@@ -221,6 +239,60 @@ export class AdminService {
     };
   }
 
+  /**
+   * Assign a role to an employee.
+   *
+   * @param id - The employee's user ID
+   * @param role - The role string to assign (e.g., "manager", "supervisor")
+   * @returns Updated employee object without password and refreshToken
+   * @throws NotFoundException if employee doesn't exist or is soft-deleted
+   * @throws BadRequestException if trying to assign 'admin' role
+   */
+  async assignRole(
+    id: string,
+    role: string,
+  ): Promise<Omit<User, 'password' | 'refreshToken'>> {
+    // Step 1: Convert id from string to number
+    const employeeId = parseInt(id, 10);
+
+    // Step 2: Check if 'admin' role is being assigned
+    // This is a security measure - admin role should never be assigned through this endpoint
+    if (role.toLowerCase() === 'admin') {
+      throw new BadRequestException('Cannot assign admin role through this endpoint');
+    }
+
+    // Step 3: Find the employee by ID
+    // TypeORM automatically excludes soft-deleted records
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 4: If employee doesn't exist (or is soft-deleted), throw NotFoundException
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${id} not found`);
+    }
+
+    // Step 5: Update the role
+    await this.userRepository.update(employeeId, { role });
+
+    // Step 6: Fetch the updated employee
+    const updatedEmployee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 7: Safety check (should never happen)
+    if (!updatedEmployee) {
+      throw new NotFoundException(`Employee with ID ${id} not found`);
+    }
+
+    // Step 8: Remove sensitive fields from response
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, refreshToken, ...employeeData } = updatedEmployee;
+
+    // Step 9: Return the updated employee without sensitive fields
+    return employeeData as Omit<User, 'password' | 'refreshToken'>;
+  }
+
   // ============================================
   // ATTENDANCE MANAGEMENT METHODS
   // ============================================
@@ -228,38 +300,308 @@ export class AdminService {
   /**
    * Get employee attendance records.
    *
-   * TODO: Implementation pending - requires:
-   *   - Attendance entity/repository to be defined
-   *   - Query parameters for filtering (documented specification needed)
-   *   - Response structure specification
+   * @param filters - Optional query parameters:
+   *   - date: Filter by specific date (YYYY-MM-DD format)
+   *   - employeeId: Filter by specific employee ID
+   *   - month: Filter by month (1-12)
+   *   - year: Filter by year
+   *
+   * @returns Array of attendance records with employee details
    */
-  async getAttendance(): Promise<{ message: string }> {
-    // Placeholder response until documentation specifies:
-    // - Attendance entity structure
-    // - Query parameters (filters, pagination)
-    // - Response format
+  async getAttendance(filters?: {
+    date?: string;
+    employeeId?: number;
+    month?: number;
+    year?: number;
+  }): Promise<{
+    message: string;
+    count: number;
+    attendance: Array<{
+      id: number;
+      employeeId: number;
+      employeeName: string;
+      employeeEmail: string;
+      date: Date;
+      createdAt: Date;
+    }>;
+  }> {
+    // Step 1: Create a query builder for complex queries with joins
+    const queryBuilder = this.attendanceRepository
+      .createQueryBuilder('attendance')
+      // Step 2: Join with user table to get employee details
+      // 'INNER JOIN' excludes attendance records where employee is soft-deleted
+      .innerJoinAndSelect('attendance.employee', 'employee')
+      // Step 3: Exclude soft-deleted employees
+      .where('employee.deletedAt IS NULL');
+
+    // Step 4: Apply optional date filter (exact date match)
+    // Date format expected: YYYY-MM-DD
+    if (filters?.date) {
+      queryBuilder.andWhere('attendance.date = :date', { date: filters.date });
+    }
+
+    // Step 5: Apply optional employeeId filter
+    if (filters?.employeeId) {
+      queryBuilder.andWhere('attendance.employeeId = :employeeId', {
+        employeeId: filters.employeeId,
+      });
+    }
+
+    // Step 6: Apply optional month filter
+    // Extract the month from the date and compare
+    if (filters?.month) {
+      queryBuilder.andWhere('EXTRACT(MONTH FROM attendance.date) = :month', {
+        month: filters.month,
+      });
+    }
+
+    // Step 7: Apply optional year filter
+    // Extract the year from the date and compare
+    if (filters?.year) {
+      queryBuilder.andWhere('EXTRACT(YEAR FROM attendance.date) = :year', {
+        year: filters.year,
+      });
+    }
+
+    // Step 8: Order by date descending (newest first)
+    queryBuilder.orderBy('attendance.date', 'DESC');
+
+    // Step 9: Execute the query
+    const attendanceRecords = await queryBuilder.getMany();
+
+    // Step 10: Transform results to include employee details
+    // Every record means the employee was present - no status needed
+    const formattedAttendance = attendanceRecords.map((record) => ({
+      id: record.id,
+      employeeId: record.employeeId,
+      employeeName: `${record.employee.firstName} ${record.employee.lastName}`,
+      employeeEmail: record.employee.email,
+      date: record.date,
+      createdAt: record.createdAt,
+    }));
+
+    // Step 11: Return the response with count
     return {
-      message: 'Get attendance endpoint - implementation pending documentation',
+      message: 'Attendance records retrieved successfully',
+      count: formattedAttendance.length,
+      attendance: formattedAttendance,
     };
   }
 
   /**
    * Generate attendance reports.
    *
-   * TODO: Implementation pending - requires:
-   *   - Report format specification (JSON, CSV, PDF)
-   *   - Report parameters (date range, grouping, metrics)
-   *   - Response structure specification
+   * @param filters - Optional query parameters:
+   *   - month: Filter by month (1-12), defaults to current month
+   *   - year: Filter by year, defaults to current year
+   *   - employeeId: Generate report for specific employee only
+   *
+   * @returns Attendance report with per-employee summary
    */
-  async getAttendanceReports(): Promise<{ message: string }> {
-    // Placeholder response until documentation specifies:
-    // - Report format and structure
-    // - Query parameters
-    // - Response format
-    return {
-      message:
-        'Get attendance reports endpoint - implementation pending documentation',
+  async getAttendanceReports(filters?: {
+    month?: number;
+    year?: number;
+    employeeId?: number;
+  }): Promise<{
+    message: string;
+    report: {
+      period: { month: number; year: number; monthName: string };
+      totalWorkingDays: number;
+      totalEmployees: number;
+      employeeReports: Array<{
+        employeeId: number;
+        employeeName: string;
+        employeeEmail: string;
+        presentDays: number;
+        onLeaveDays: number;
+        absentDays: number;
+        attendancePercentage: number;
+      }>;
     };
+  }> {
+    // Step 1: Get current date for defaults
+    const now = new Date();
+    const reportMonth = filters?.month || now.getMonth() + 1; // getMonth() is 0-indexed
+    const reportYear = filters?.year || now.getFullYear();
+
+    // Step 2: Get month name for display
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    const monthName = monthNames[reportMonth - 1];
+
+    // Step 3: Calculate total working days in the month (excluding Sat/Sun)
+    const totalWorkingDays = this.calculateWorkingDays(reportYear, reportMonth);
+
+    // Step 4: Build query to get all employees (or specific employee)
+    const employeeQuery = this.userRepository
+      .createQueryBuilder('user')
+      .where('user.role = :role', { role: 'employee' })
+      .andWhere('user.deletedAt IS NULL');
+
+    // Step 5: Apply optional employeeId filter
+    if (filters?.employeeId) {
+      employeeQuery.andWhere('user.id = :employeeId', {
+        employeeId: filters.employeeId,
+      });
+    }
+
+    const employees = await employeeQuery.getMany();
+
+    // Step 6: Calculate start and end dates for the period
+    const startDate = new Date(reportYear, reportMonth - 1, 1);
+    const endDate = new Date(reportYear, reportMonth, 0); // Last day of month
+
+    // Step 7: Format dates for SQL queries (YYYY-MM-DD)
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+
+    // Step 8: Build employee reports
+    const employeeReports = await Promise.all(
+      employees.map(async (employee) => {
+        // Step 8a: Count attendance records for this employee in the period
+        const presentDays = await this.attendanceRepository
+          .createQueryBuilder('attendance')
+          .where('attendance.employeeId = :employeeId', { employeeId: employee.id })
+          .andWhere('attendance.date >= :startDate', { startDate: startDateStr })
+          .andWhere('attendance.date <= :endDate', { endDate: endDateStr })
+          .getCount();
+
+        // Step 8b: Calculate approved leave days in the period
+        // We need to count days from approved leave requests that fall within this period
+        const onLeaveDays = await this.calculateApprovedLeaveDays(
+          employee.id,
+          startDate,
+          endDate,
+        );
+
+        // Step 8c: Calculate absent days
+        // Absent = Working days - Present - On Leave
+        const absentDays = Math.max(0, totalWorkingDays - presentDays - onLeaveDays);
+
+        // Step 8d: Calculate attendance percentage
+        // Avoid division by zero
+        const attendancePercentage =
+          totalWorkingDays > 0
+            ? Math.round((presentDays / totalWorkingDays) * 100 * 100) / 100
+            : 0;
+
+        return {
+          employeeId: employee.id,
+          employeeName: `${employee.firstName} ${employee.lastName}`,
+          employeeEmail: employee.email,
+          presentDays,
+          onLeaveDays,
+          absentDays,
+          attendancePercentage,
+        };
+      }),
+    );
+
+    // Step 9: Sort by attendance percentage descending (best attendance first)
+    employeeReports.sort((a, b) => b.attendancePercentage - a.attendancePercentage);
+
+    // Step 10: Return the report
+    return {
+      message: 'Attendance report generated successfully',
+      report: {
+        period: {
+          month: reportMonth,
+          year: reportYear,
+          monthName: monthName,
+        },
+        totalWorkingDays,
+        totalEmployees: employeeReports.length,
+        employeeReports,
+      },
+    };
+  }
+
+  /**
+   * Helper: Calculate working days in a month (excluding Saturdays and Sundays).
+   *
+   * @param year - The year
+   * @param month - The month (1-12)
+   * @returns Number of working days (Mon-Fri)
+   */
+  private calculateWorkingDays(year: number, month: number): number {
+    let workingDays = 0;
+
+    // Get the number of days in the month
+    const daysInMonth = new Date(year, month, 0).getDate();
+
+    // Loop through each day of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = new Date(year, month - 1, day);
+      const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+
+      // Count only weekdays (Monday = 1 to Friday = 5)
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        workingDays++;
+      }
+    }
+
+    return workingDays;
+  }
+
+  /**
+   * Helper: Calculate approved leave days for an employee within a date range.
+   *
+   * @param employeeId - The employee's ID
+   * @param startDate - Start of the period
+   * @param endDate - End of the period
+   * @returns Number of approved leave days in the period
+   */
+  private async calculateApprovedLeaveDays(
+    employeeId: number,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<number> {
+    // Get all approved leave requests for this employee
+    // that overlap with the given period
+    const leaveRequests = await this.leaveRequestRepository
+      .createQueryBuilder('leave')
+      .where('leave.employeeId = :employeeId', { employeeId })
+      .andWhere('leave.status = :status', { status: 'approved' })
+      // Leave request overlaps with period if:
+      // startDate <= period end AND endDate >= period start
+      .andWhere('leave.startDate <= :endDate', {
+        endDate: endDate.toISOString().split('T')[0],
+      })
+      .andWhere('leave.endDate >= :startDate', {
+        startDate: startDate.toISOString().split('T')[0],
+      })
+      .getMany();
+
+    // Calculate total leave days that fall within the period
+    let totalLeaveDays = 0;
+
+    for (const leave of leaveRequests) {
+      // Determine the actual overlap with our period
+      const leaveStart = new Date(leave.startDate);
+      const leaveEnd = new Date(leave.endDate);
+
+      // Get the effective start and end within our period
+      const effectiveStart = leaveStart < startDate ? startDate : leaveStart;
+      const effectiveEnd = leaveEnd > endDate ? endDate : leaveEnd;
+
+      // Count working days in this overlap (exclude weekends)
+      const diffTime = effectiveEnd.getTime() - effectiveStart.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // +1 to include both start and end
+
+      // Count only weekdays in the leave period
+      for (let i = 0; i < diffDays; i++) {
+        const checkDate = new Date(effectiveStart);
+        checkDate.setDate(effectiveStart.getDate() + i);
+        const dayOfWeek = checkDate.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+          totalLeaveDays++;
+        }
+      }
+    }
+
+    return totalLeaveDays;
   }
 
   // ============================================
@@ -270,51 +612,180 @@ export class AdminService {
    * Allocate leave days to an employee.
    *
    * @param data - The allocation data containing:
-   *   - employee_id: The ID of the employee
-   *   - total_leave_days: Number of leave days to allocate
+   *   - employeeId: The ID of the employee
+   *   - totalLeaveDays: Number of leave days to allocate
    *   - year: The year for which leave is allocated
    *
-   * TODO: Implementation pending - requires:
-   *   - LeaveAllocation entity/repository to be defined
-   *   - Validation rules (max days, valid year range)
-   *   - Error handling for employee not found
-   *   - Response structure specification
-   *   - Clarification: does this create new or update existing allocation?
+   * @returns The created leave allocation (without sensitive user data)
+   * @throws NotFoundException if employee doesn't exist
+   * @throws BadRequestException if employee is an admin
+   * @throws BadRequestException if allocation already exists for this employee and year
    */
   async allocateLeave(data: {
-    employee_id: number;
-    total_leave_days: number;
+    employeeId: number;
+    totalLeaveDays: number;
     year: number;
-  }): Promise<{ message: string; data: typeof data }> {
-    // Placeholder response - echoes received data for verification
-    // Actual implementation will:
-    // 1. Validate employee exists
-    // 2. Create or update leave allocation record
-    // 3. Return appropriate response (structure TBD in docs)
+  }): Promise<{
+    message: string;
+    allocation: Omit<LeaveAllocation, 'employee'> & {
+      employee: Omit<User, 'password' | 'refreshToken'>;
+    };
+  }> {
+    // Step 1: Extract fields from input data
+    const { employeeId, totalLeaveDays, year } = data;
+
+    // Step 2: Check if the employee exists
+    // findOne returns the user if found, or null if not found
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 3: If employee doesn't exist, throw NotFoundException (404)
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 4: Check if the user is an admin
+    // Admins should not have leave allocations - only employees
+    if (employee.role === 'admin') {
+      throw new BadRequestException(
+        'Cannot allocate leave to admin users. Only employees can receive leave allocations.',
+      );
+    }
+
+    // Step 5: Check if an allocation already exists for this employee and year
+    // This prevents duplicate allocations for the same year
+    const existingAllocation = await this.leaveAllocationRepository.findOne({
+      where: {
+        employeeId: employeeId,
+        year: year,
+      },
+    });
+
+    // Step 6: If allocation exists, throw BadRequestException (400)
+    if (existingAllocation) {
+      throw new BadRequestException(
+        `Leave already allocated for this employee for ${year}`,
+      );
+    }
+
+    // Step 7: Create a new LeaveAllocation entity
+    // remainingDays is set equal to totalLeaveDays since no days are used yet
+    // usedDays defaults to 0 (as defined in the entity)
+    const newAllocation = this.leaveAllocationRepository.create({
+      employeeId: employeeId,
+      totalLeaveDays: totalLeaveDays,
+      usedDays: 0,
+      remainingDays: totalLeaveDays,
+      year: year,
+    });
+
+    // Step 8: Save the allocation to the database
+    const savedAllocation =
+      await this.leaveAllocationRepository.save(newAllocation);
+
+    // Step 9: Remove sensitive fields from the employee data
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, refreshToken, ...employeeData } = employee;
+
+    // Step 10: Return success message with the created allocation
     return {
-      message:
-        'Allocate leave endpoint - implementation pending documentation',
-      data: data, // Echo back received data for verification during development
+      message: `Successfully allocated ${totalLeaveDays} leave days to employee for ${year}`,
+      allocation: {
+        ...savedAllocation,
+        employee: employeeData as Omit<User, 'password' | 'refreshToken'>,
+      },
     };
   }
 
   /**
    * Get all leave requests submitted by employees.
    *
-   * TODO: Implementation pending - requires:
-   *   - LeaveRequest entity/repository to be defined
-   *   - Query parameters for filtering (status, employee, date range)
-   *   - Pagination specification
-   *   - Response structure specification
+   * @param filters - Optional query parameters for filtering:
+   *   - status: Filter by 'pending', 'approved', or 'denied'
+   *   - employeeId: Filter by specific employee ID
+   *   - year: Filter by year based on the startDate
+   *
+   * @returns Array of leave requests with employee details (without sensitive data)
    */
-  async getLeaveRequests(): Promise<{ message: string }> {
-    // Placeholder response until documentation specifies:
-    // - LeaveRequest entity structure
-    // - Query parameters (filters, pagination)
-    // - Response format
+  async getLeaveRequests(filters?: {
+    status?: string;
+    employeeId?: number;
+    year?: number;
+  }): Promise<{
+    message: string;
+    count: number;
+    leaveRequests: Array<
+      Omit<LeaveRequest, 'employee'> & {
+        employee: { id: number; firstName: string; lastName: string; email: string };
+      }
+    >;
+  }> {
+    // Step 1: Create a query builder for complex queries with joins
+    // Query builder gives us more control over the SQL query
+    const queryBuilder = this.leaveRequestRepository
+      .createQueryBuilder('leaveRequest')
+      // Step 2: Join with user table to get employee details
+      // 'INNER JOIN' excludes leave requests where employee is soft-deleted
+      .innerJoinAndSelect('leaveRequest.employee', 'employee')
+      // Step 3: Exclude soft-deleted employees
+      // Users with deletedAt set are considered "soft deleted"
+      .where('employee.deletedAt IS NULL');
+
+    // Step 4: Apply optional status filter
+    // If status is provided, filter leave requests by that status
+    if (filters?.status) {
+      queryBuilder.andWhere('leaveRequest.status = :status', {
+        status: filters.status,
+      });
+    }
+
+    // Step 5: Apply optional employeeId filter
+    // If employeeId is provided, filter to only that employee's requests
+    if (filters?.employeeId) {
+      queryBuilder.andWhere('leaveRequest.employeeId = :employeeId', {
+        employeeId: filters.employeeId,
+      });
+    }
+
+    // Step 6: Apply optional year filter
+    // Extract the year from startDate and compare
+    // EXTRACT(YEAR FROM ...) is a PostgreSQL function
+    if (filters?.year) {
+      queryBuilder.andWhere('EXTRACT(YEAR FROM leaveRequest.startDate) = :year', {
+        year: filters.year,
+      });
+    }
+
+    // Step 7: Order by createdAt descending (newest first)
+    queryBuilder.orderBy('leaveRequest.createdAt', 'DESC');
+
+    // Step 8: Execute the query and get all matching leave requests
+    const leaveRequests = await queryBuilder.getMany();
+
+    // Step 9: Transform results to remove sensitive employee fields
+    // Map each leave request to exclude password and refreshToken from employee
+    const sanitizedLeaveRequests = leaveRequests.map((request) => {
+      // Destructure to separate employee from the rest of the request
+      const { employee, ...requestData } = request;
+
+      // Return the leave request with only safe employee fields
+      return {
+        ...requestData,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      };
+    });
+
+    // Step 10: Return the response with count and data
     return {
-      message:
-        'Get leave requests endpoint - implementation pending documentation',
+      message: 'Leave requests retrieved successfully',
+      count: sanitizedLeaveRequests.length,
+      leaveRequests: sanitizedLeaveRequests,
     };
   }
 
@@ -322,28 +793,106 @@ export class AdminService {
    * Approve a leave request.
    *
    * @param requestId - The ID of the leave request to approve
+   * @param adminId - The ID of the admin approving the request (from JWT)
    *
-   * TODO: Implementation pending - requires:
-   *   - LeaveRequest entity/repository to be defined
-   *   - Status update logic
-   *   - Leave balance deduction logic (if applicable)
-   *   - Notification mechanism (if applicable)
-   *   - Response structure specification
+   * @returns Success message with the approved leave request details
+   * @throws NotFoundException if leave request doesn't exist
+   * @throws BadRequestException if request is already reviewed
+   * @throws BadRequestException if no leave allocation for that year
+   * @throws BadRequestException if not enough remaining leave days
    */
   async approveLeaveRequest(
     requestId: string,
-  ): Promise<{ message: string; request_id: string }> {
-    // Placeholder response
-    // Actual implementation will:
-    // 1. Validate request exists and is pending
-    // 2. Update status to 'approved'
-    // 3. Deduct from leave balance (if applicable)
-    // 4. Trigger notification (if applicable)
-    // 5. Return appropriate response (structure TBD in docs)
+    adminId: number,
+  ): Promise<{
+    message: string;
+    leaveRequest: Omit<LeaveRequest, 'employee'> & {
+      employee: { id: number; firstName: string; lastName: string; email: string };
+    };
+  }> {
+    // Step 1: Convert requestId from string to number
+    const leaveRequestId = parseInt(requestId, 10);
+
+    // Step 2: Find the leave request with employee details
+    const leaveRequest = await this.leaveRequestRepository.findOne({
+      where: { id: leaveRequestId },
+      relations: ['employee'],
+    });
+
+    // Step 3: If leave request doesn't exist, throw NotFoundException (404)
+    if (!leaveRequest) {
+      throw new NotFoundException(`Leave request with ID ${requestId} not found`);
+    }
+
+    // Step 4: Check if request is already reviewed (approved or denied)
+    // Only pending requests can be approved
+    if (leaveRequest.status !== 'pending') {
+      throw new BadRequestException(
+        'This leave request has already been reviewed and cannot be changed',
+      );
+    }
+
+    // Step 5: Get the year from the leave request's startDate
+    // We need this to find the correct leave allocation
+    const leaveYear = new Date(leaveRequest.startDate).getFullYear();
+
+    // Step 6: Find the employee's leave allocation for that year
+    const leaveAllocation = await this.leaveAllocationRepository.findOne({
+      where: {
+        employeeId: leaveRequest.employeeId,
+        year: leaveYear,
+      },
+    });
+
+    // Step 7: If no allocation exists for that year, throw BadRequestException
+    if (!leaveAllocation) {
+      throw new BadRequestException(
+        'No leave allocation found for this employee for this year',
+      );
+    }
+
+    // Step 8: Check if employee has enough remaining days
+    if (leaveAllocation.remainingDays < leaveRequest.numberOfDays) {
+      throw new BadRequestException(
+        'Employee does not have enough remaining leave days',
+      );
+    }
+
+    // Step 9: Update the leave request
+    // - Set status to 'approved'
+    // - Set reviewedBy to the admin's ID
+    // - Set reviewedAt to current timestamp
+    leaveRequest.status = 'approved';
+    leaveRequest.reviewedBy = adminId;
+    leaveRequest.reviewedAt = new Date();
+
+    // Step 10: Update the leave allocation
+    // - Increase usedDays by numberOfDays
+    // - Decrease remainingDays by numberOfDays
+    leaveAllocation.usedDays += leaveRequest.numberOfDays;
+    leaveAllocation.remainingDays -= leaveRequest.numberOfDays;
+
+    // Step 11: Save both updates to the database
+    // Both saves happen - if one fails, you may want to use a transaction
+    // For now, we save sequentially
+    await this.leaveRequestRepository.save(leaveRequest);
+    await this.leaveAllocationRepository.save(leaveAllocation);
+
+    // Step 12: Prepare the response with sanitized employee data
+    const { employee, ...requestData } = leaveRequest;
+
+    // Step 13: Return success response
     return {
-      message:
-        'Approve leave request endpoint - implementation pending documentation',
-      request_id: requestId,
+      message: `Leave request approved successfully. ${leaveRequest.numberOfDays} days deducted from allocation.`,
+      leaveRequest: {
+        ...requestData,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      },
     };
   }
 
@@ -351,29 +900,303 @@ export class AdminService {
    * Deny a leave request.
    *
    * @param requestId - The ID of the leave request to deny
+   * @param adminId - The ID of the admin denying the request (from JWT)
    *
-   * TODO: Implementation pending - requires:
-   *   - LeaveRequest entity/repository to be defined
-   *   - Status update logic
-   *   - Denial reason handling (often required for audit)
-   *   - Notification mechanism (if applicable)
-   *   - Response structure specification
+   * @returns Success message with the denied leave request details
+   * @throws NotFoundException if leave request doesn't exist
+   * @throws BadRequestException if request is already reviewed
    */
   async denyLeaveRequest(
     requestId: string,
-  ): Promise<{ message: string; request_id: string }> {
-    // Placeholder response
-    // Actual implementation will:
-    // 1. Validate request exists and is pending
-    // 2. Update status to 'denied'
-    // 3. Store denial reason (if provided/required)
-    // 4. Trigger notification (if applicable)
-    // 5. Return appropriate response (structure TBD in docs)
-    return {
-      message:
-        'Deny leave request endpoint - implementation pending documentation',
-      request_id: requestId,
+    adminId: number,
+  ): Promise<{
+    message: string;
+    leaveRequest: Omit<LeaveRequest, 'employee'> & {
+      employee: { id: number; firstName: string; lastName: string; email: string };
     };
+  }> {
+    // Step 1: Convert requestId from string to number
+    const leaveRequestId = parseInt(requestId, 10);
+
+    // Step 2: Find the leave request with employee details
+    const leaveRequest = await this.leaveRequestRepository.findOne({
+      where: { id: leaveRequestId },
+      relations: ['employee'],
+    });
+
+    // Step 3: If leave request doesn't exist, throw NotFoundException (404)
+    if (!leaveRequest) {
+      throw new NotFoundException(`Leave request with ID ${requestId} not found`);
+    }
+
+    // Step 4: Check if request is already reviewed (approved or denied)
+    // Only pending requests can be denied
+    if (leaveRequest.status !== 'pending') {
+      throw new BadRequestException(
+        'This leave request has already been reviewed and cannot be changed',
+      );
+    }
+
+    // Step 5: Update the leave request
+    // - Set status to 'denied'
+    // - Set reviewedBy to the admin's ID
+    // - Set reviewedAt to current timestamp
+    // Note: We do NOT touch leave_allocations - no days are deducted for denied requests
+    leaveRequest.status = 'denied';
+    leaveRequest.reviewedBy = adminId;
+    leaveRequest.reviewedAt = new Date();
+
+    // Step 6: Save the update to the database
+    await this.leaveRequestRepository.save(leaveRequest);
+
+    // Step 7: Prepare the response with sanitized employee data
+    const { employee, ...requestData } = leaveRequest;
+
+    // Step 8: Return success response
+    return {
+      message: 'Leave request denied successfully.',
+      leaveRequest: {
+        ...requestData,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      },
+    };
+  }
+
+  // ============================================
+  // PLACEHOLDER METHODS (TO BE IMPLEMENTED)
+  // ============================================
+
+  async getDashboard(): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  /**
+   * Get all employees (excludes admins and soft-deleted users).
+   *
+   * @returns Array of employee objects without password and refreshToken
+   */
+  async getAllEmployees(): Promise<Omit<User, 'password' | 'refreshToken'>[]> {
+    // Step 1: Find all users with role 'employee'
+    // TypeORM automatically excludes soft-deleted records (where deletedAt is not null)
+    // because we're using @DeleteDateColumn in the User entity
+    const employees = await this.userRepository.find({
+      where: { role: 'employee' },
+    });
+
+    // Step 2: Remove password and refreshToken from each employee
+    // These sensitive fields should never be exposed in API responses
+    const employeesWithoutSensitiveData = employees.map((employee) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { password, refreshToken, ...employeeData } = employee;
+      return employeeData;
+    });
+
+    // Step 3: Return the sanitized employee list
+    return employeesWithoutSensitiveData as Omit<User, 'password' | 'refreshToken'>[];
+  }
+
+  /**
+   * Get a single employee by ID.
+   *
+   * @param id - The employee's user ID
+   * @returns Employee object without password and refreshToken
+   * @throws NotFoundException if employee doesn't exist or is an admin
+   */
+  async getEmployeeById(id: string): Promise<Omit<User, 'password' | 'refreshToken'>> {
+    // Step 1: Convert id from string to number
+    const employeeId = parseInt(id, 10);
+
+    // Step 2: Find the employee by ID and role
+    // - where: { id, role: 'employee' } ensures we only return employees, not admins
+    // - TypeORM automatically excludes soft-deleted records (deletedAt is not null)
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId, role: 'employee' },
+    });
+
+    // Step 3: If no employee found, throw NotFoundException
+    // This covers three cases:
+    // - User with this ID doesn't exist
+    // - User exists but is an admin (role !== 'employee')
+    // - User was soft-deleted (deletedAt is not null)
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${id} not found`);
+    }
+
+    // Step 4: Remove password and refreshToken from the response
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, refreshToken, ...employeeData } = employee;
+
+    // Step 5: Return the sanitized employee data
+    return employeeData as Omit<User, 'password' | 'refreshToken'>;
+  }
+
+  /**
+   * Get leave calendar - shows approved leave requests for calendar display.
+   *
+   * @param query - Optional query parameters:
+   *   - year: Filter by year
+   *   - month: Filter by month (1-12)
+   *   - employee_id: Filter by specific employee ID
+   *
+   * @returns Array of approved leave requests formatted for calendar display
+   */
+  async getLeaveCalendar(query: {
+    year?: number;
+    month?: number;
+    employee_id?: number;
+  }): Promise<{
+    message: string;
+    count: number;
+    calendar: Array<{
+      leaveRequestId: number;
+      employeeId: number;
+      employeeName: string;
+      employeeEmail: string;
+      startDate: Date;
+      endDate: Date;
+      numberOfDays: number;
+      reason: string;
+    }>;
+  }> {
+    // Step 1: Create a query builder for complex queries with joins
+    const queryBuilder = this.leaveRequestRepository
+      .createQueryBuilder('leaveRequest')
+      // Step 2: Join with user table to get employee details
+      // 'INNER JOIN' excludes leave requests where employee is soft-deleted
+      .innerJoinAndSelect('leaveRequest.employee', 'employee')
+      // Step 3: Only get APPROVED leave requests
+      .where('leaveRequest.status = :status', { status: 'approved' })
+      // Step 4: Exclude soft-deleted employees
+      .andWhere('employee.deletedAt IS NULL');
+
+    // Step 5: Apply optional year filter
+    // Extract the year from startDate and compare
+    if (query.year) {
+      queryBuilder.andWhere(
+        'EXTRACT(YEAR FROM leaveRequest.startDate) = :year',
+        { year: query.year },
+      );
+    }
+
+    // Step 6: Apply optional month filter
+    // Extract the month from startDate and compare
+    if (query.month) {
+      queryBuilder.andWhere(
+        'EXTRACT(MONTH FROM leaveRequest.startDate) = :month',
+        { month: query.month },
+      );
+    }
+
+    // Step 7: Apply optional employee_id filter
+    if (query.employee_id) {
+      queryBuilder.andWhere('leaveRequest.employeeId = :employeeId', {
+        employeeId: query.employee_id,
+      });
+    }
+
+    // Step 8: Order by startDate ascending (earliest first)
+    // This makes it easy to display in chronological order on a calendar
+    queryBuilder.orderBy('leaveRequest.startDate', 'ASC');
+
+    // Step 9: Execute the query
+    const leaveRequests = await queryBuilder.getMany();
+
+    // Step 10: Transform results into a clean calendar format
+    // Include only the fields needed for calendar display
+    const calendar = leaveRequests.map((request) => ({
+      leaveRequestId: request.id,
+      employeeId: request.employeeId,
+      employeeName: `${request.employee.firstName} ${request.employee.lastName}`,
+      employeeEmail: request.employee.email,
+      startDate: request.startDate,
+      endDate: request.endDate,
+      numberOfDays: request.numberOfDays,
+      reason: request.reason,
+    }));
+
+    // Step 11: Return the response
+    return {
+      message: 'Leave calendar retrieved successfully',
+      count: calendar.length,
+      calendar: calendar,
+    };
+  }
+
+  async createProcurement(body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getAllProcurements(): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getProcurementById(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async deleteProcurement(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async createBill(body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getAllBills(): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getBillById(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async deleteBill(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async createDocument(body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async assignDocument(id: string, body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getAllDocuments(): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async deleteDocument(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async createAsset(body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async updateAsset(id: string, body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async assignAsset(id: string, body: any): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getAllAssets(): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async getAssetById(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
+  }
+
+  async deleteAsset(id: string): Promise<{ message: string }> {
+    return { message: 'coming soon' };
   }
 }
 
