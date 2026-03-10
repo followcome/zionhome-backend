@@ -21,6 +21,9 @@ import { Repository, Not } from 'typeorm';
 // bcrypt is a secure hashing algorithm designed for passwords
 import * as bcrypt from 'bcrypt';
 
+// Import ExcelJS for generating Excel files
+import * as ExcelJS from 'exceljs';
+
 // Import User entity - represents the users table in the database
 import { User } from '../entities/user.entity';
 
@@ -32,6 +35,12 @@ import { LeaveRequest } from '../entities/leave-request.entity';
 
 // Import Attendance entity - represents the attendances table
 import { Attendance } from '../entities/attendance.entity';
+
+// Import Salary entity - represents the salaries table
+import { Salary } from '../entities/salary.entity';
+
+// Import SalaryPayment entity - represents the salary_payments table
+import { SalaryPayment } from '../entities/salary-payment.entity';
 
 // Import DTOs - define the shape of data for employee operations
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
@@ -55,6 +64,12 @@ export class AdminService {
 
     @InjectRepository(Attendance)
     private readonly attendanceRepository: Repository<Attendance>,
+
+    @InjectRepository(Salary)
+    private readonly salaryRepository: Repository<Salary>,
+
+    @InjectRepository(SalaryPayment)
+    private readonly salaryPaymentRepository: Repository<SalaryPayment>,
   ) {}
 
   // ============================================
@@ -1197,6 +1212,1055 @@ export class AdminService {
 
   async deleteAsset(id: string): Promise<{ message: string }> {
     return { message: 'coming soon' };
+  }
+
+  // ============================================
+  // SALARY MANAGEMENT METHODS
+  // ============================================
+
+  /**
+   * Create a salary structure for an employee.
+   *
+   * @param data - The salary data containing:
+   *   - employeeId: The ID of the employee
+   *   - amount: The salary amount
+   *   - effectiveDate: When this salary takes effect (YYYY-MM-DD)
+   *
+   * @returns The created salary record with employee details
+   * @throws NotFoundException if employee doesn't exist
+   * @throws BadRequestException if employee is an admin
+   * @throws BadRequestException if salary already exists for this employee
+   */
+  async createSalary(data: {
+    employeeId: number;
+    amount: number;
+    effectiveDate: string;
+  }): Promise<{
+    message: string;
+    salary: Omit<Salary, 'employee'> & {
+      employee: { id: number; firstName: string; lastName: string; email: string };
+    };
+  }> {
+    // Step 1: Extract fields from input data
+    // Destructuring makes the code cleaner and easier to read
+    const { employeeId, amount, effectiveDate } = data;
+
+    // Step 2: Check if the employee exists
+    // findOne returns the user if found, or null if not found
+    // We also check deletedAt IS NULL to exclude soft-deleted employees
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 3: If employee doesn't exist, throw NotFoundException (404)
+    // This tells the client that the requested employee was not found
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 4: Check if employee is soft-deleted
+    // deletedAt is set when an employee is deactivated
+    if (employee.deletedAt) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 5: Check if the user is an admin
+    // Admins should not have salary records - only employees
+    // This is a business rule to separate admin users from payroll
+    if (employee.role === 'admin') {
+      throw new BadRequestException(
+        'Cannot create salary for admin users. Only employees can have salary records.',
+      );
+    }
+
+    // Step 6: Check if a salary record already exists for this employee
+    // Each employee should only have ONE salary record initially
+    // To change salary, use the update endpoint (which adds a new history record)
+    const existingSalary = await this.salaryRepository.findOne({
+      where: { employeeId: employeeId },
+    });
+
+    // Step 7: If salary exists, throw BadRequestException (400)
+    // The message tells the client to use the update endpoint instead
+    if (existingSalary) {
+      throw new BadRequestException(
+        'Salary structure already exists for this employee. Use the update endpoint to modify it',
+      );
+    }
+
+    // Step 8: Create a new Salary entity
+    // create() builds the entity but does NOT save to database yet
+    const newSalary = this.salaryRepository.create({
+      employeeId: employeeId,
+      amount: amount,
+      effectiveDate: new Date(effectiveDate), // Convert string to Date object
+    });
+
+    // Step 9: Save the salary record to the database
+    // save() persists the entity and returns it with generated fields (id, createdAt, etc.)
+    const savedSalary = await this.salaryRepository.save(newSalary);
+
+    // Step 10: Prepare the response with sanitized employee data
+    // We only include safe employee fields (no password or refreshToken)
+    return {
+      message: `Salary structure created successfully for employee`,
+      salary: {
+        ...savedSalary,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      },
+    };
+  }
+
+  // ============================================
+  // UPDATE SALARY (Add new row to preserve history)
+  // ============================================
+  /**
+   * Updates an employee's salary by creating a NEW record (preserves history).
+   * The existing salary record remains unchanged in the database.
+   *
+   * @param salaryId - The ID of the existing salary record to reference
+   * @param data - Object containing amount and effectiveDate
+   * @returns The newly created salary record with employee details
+   */
+  async updateSalary(
+    salaryId: number,
+    data: {
+      amount: number;
+      effectiveDate: string;
+    },
+  ): Promise<{
+    message: string;
+    previousSalary: {
+      id: number;
+      amount: number;
+      effectiveDate: Date;
+    };
+    newSalary: Omit<Salary, 'employee'> & {
+      employee: { id: number; firstName: string; lastName: string; email: string };
+    };
+  }> {
+    // Step 1: Extract fields from input data
+    // Destructuring makes the code cleaner and easier to read
+    const { amount, effectiveDate } = data;
+
+    // Step 1b: Validate required fields
+    // If amount or effectiveDate is missing, throw BadRequestException
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('Amount is required and must be greater than 0');
+    }
+
+    if (!effectiveDate) {
+      throw new BadRequestException('effectiveDate is required (format: YYYY-MM-DD)');
+    }
+
+    // Step 1c: Validate date format
+    // Check if the date string can be parsed into a valid Date
+    const parsedDate = new Date(effectiveDate);
+    if (isNaN(parsedDate.getTime())) {
+      throw new BadRequestException('Invalid effectiveDate format. Use YYYY-MM-DD (e.g., 2026-06-01)');
+    }
+
+    // Step 2: Find the existing salary record by its ID
+    // We use relations to also load the employee data in one query
+    const existingSalary = await this.salaryRepository.findOne({
+      where: { id: salaryId },
+      relations: ['employee'],
+    });
+
+    // Step 3: If salary record doesn't exist, throw NotFoundException (404)
+    // This tells the client that the requested salary record was not found
+    if (!existingSalary) {
+      throw new NotFoundException(`Salary record with ID ${salaryId} not found`);
+    }
+
+    // Step 4: Get the employee from the existing salary record
+    // We need the employeeId to create the new salary record
+    const employee = existingSalary.employee;
+
+    // Step 5: Check if the employee is soft-deleted
+    // We shouldn't update salary for deactivated employees
+    if (employee.deletedAt) {
+      throw new NotFoundException(
+        `Cannot update salary. Employee has been deactivated.`,
+      );
+    }
+
+    // Step 6: Create a NEW salary record (do NOT overwrite the existing one)
+    // This preserves the salary history - the old record stays in the database
+    // The new record has the same employeeId but different amount and effectiveDate
+    const newSalary = this.salaryRepository.create({
+      employeeId: employee.id, // Same employee as the existing salary
+      amount: amount, // New salary amount from request body
+      effectiveDate: parsedDate, // Use the validated Date object from Step 1c
+    });
+
+    // Step 7: Save the new salary record to the database
+    // save() persists the entity and returns it with generated fields (id, createdAt, etc.)
+    const savedSalary = await this.salaryRepository.save(newSalary);
+
+    // Step 8: Prepare the response
+    // Include both the previous salary (for reference) and the new salary
+    // We only include safe employee fields (no password or refreshToken)
+    return {
+      message: `Salary updated successfully. New salary record created to preserve history.`,
+      previousSalary: {
+        id: existingSalary.id,
+        amount: existingSalary.amount,
+        effectiveDate: existingSalary.effectiveDate,
+      },
+      newSalary: {
+        ...savedSalary,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      },
+    };
+  }
+
+  // ============================================
+  // PAY ALL STAFF
+  // ============================================
+  /**
+   * Process salary payment for ALL employees with a specific role at once.
+   *
+   * @param data - Object containing role, month, year, and paymentDate
+   * @returns Detailed response with paid employees, skipped employees, and summary
+   */
+  async payAllStaff(data: {
+    role: string;
+    month: number;
+    year: number;
+    paymentDate: string;
+  }): Promise<{
+    message: string;
+    summary: {
+      totalEmployeesInRole: number;
+      totalPaid: number;
+      totalSkippedNoSalary: number;
+      totalSkippedAlreadyPaid: number;
+      totalAmountPaid: number;
+    };
+    paidEmployees: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      amountPaid: number;
+    }>;
+    skippedNoSalary: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      reason: string;
+    }>;
+    skippedAlreadyPaid: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      reason: string;
+    }>;
+  }> {
+    // Step 1: Extract fields from input data
+    const { role, month, year, paymentDate } = data;
+
+    // Step 2: Validate required fields
+    if (!role || role.trim() === '') {
+      throw new BadRequestException('Role is required');
+    }
+
+    if (!month || month < 1 || month > 12) {
+      throw new BadRequestException('Month is required and must be between 1 and 12');
+    }
+
+    if (!year || year < 2000) {
+      throw new BadRequestException('Year is required and must be a valid year');
+    }
+
+    if (!paymentDate) {
+      throw new BadRequestException('paymentDate is required (format: YYYY-MM-DD)');
+    }
+
+    // Step 3: Validate paymentDate format
+    const parsedPaymentDate = new Date(paymentDate);
+    if (isNaN(parsedPaymentDate.getTime())) {
+      throw new BadRequestException('Invalid paymentDate format. Use YYYY-MM-DD');
+    }
+
+    // Step 4: Find all active employees with the specified role
+    // Active means deletedAt is null (not soft deleted)
+    const employees = await this.userRepository.find({
+      where: {
+        role: role,
+        deletedAt: null as unknown as Date,
+      },
+    });
+
+    // Step 5: If no employees found with that role, throw NotFoundException
+    if (employees.length === 0) {
+      throw new NotFoundException(`No active employees found with role "${role}"`);
+    }
+
+    // Step 6: Initialize arrays to track results
+    const paidEmployees: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      amountPaid: number;
+    }> = [];
+
+    const skippedNoSalary: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      reason: string;
+    }> = [];
+
+    const skippedAlreadyPaid: Array<{
+      employeeId: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      reason: string;
+    }> = [];
+
+    // Step 7: Process each employee
+    for (const employee of employees) {
+      // Step 7a: Find the most recent salary for this employee
+      // Order by effectiveDate descending to get the current salary
+      const currentSalary = await this.salaryRepository.findOne({
+        where: { employeeId: employee.id },
+        order: { effectiveDate: 'DESC' },
+      });
+
+      // Step 7b: If no salary structure exists, skip this employee
+      if (!currentSalary) {
+        skippedNoSalary.push({
+          employeeId: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+          reason: 'No salary structure set up for this employee',
+        });
+        continue; // Move to next employee
+      }
+
+      // Step 7c: Check if this employee has already been paid for this month/year
+      const existingPayment = await this.salaryPaymentRepository.findOne({
+        where: {
+          employeeId: employee.id,
+          month: month,
+          year: year,
+        },
+      });
+
+      // Step 7d: If already paid, skip this employee
+      if (existingPayment) {
+        skippedAlreadyPaid.push({
+          employeeId: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+          reason: `Already paid for ${month}/${year}`,
+        });
+        continue; // Move to next employee
+      }
+
+      // Step 7e: Create and save the payment record
+      const newPayment = this.salaryPaymentRepository.create({
+        employeeId: employee.id,
+        month: month,
+        year: year,
+        amountPaid: currentSalary.amount,
+        paymentDate: parsedPaymentDate,
+      });
+
+      await this.salaryPaymentRepository.save(newPayment);
+
+      // Step 7f: Add to paid employees list
+      paidEmployees.push({
+        employeeId: employee.id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        email: employee.email,
+        amountPaid: Number(currentSalary.amount),
+      });
+    }
+
+    // Step 8: Check if ALL employees were skipped
+    if (paidEmployees.length === 0) {
+      // Build a helpful error message explaining why all were skipped
+      let errorMessage = `Could not pay any employees with role "${role}". `;
+
+      if (skippedNoSalary.length > 0 && skippedAlreadyPaid.length > 0) {
+        errorMessage += `${skippedNoSalary.length} employee(s) have no salary structure, and ${skippedAlreadyPaid.length} employee(s) have already been paid for ${month}/${year}.`;
+      } else if (skippedNoSalary.length > 0) {
+        errorMessage += `All ${skippedNoSalary.length} employee(s) have no salary structure set up.`;
+      } else if (skippedAlreadyPaid.length > 0) {
+        errorMessage += `All ${skippedAlreadyPaid.length} employee(s) have already been paid for ${month}/${year}.`;
+      }
+
+      throw new BadRequestException(errorMessage);
+    }
+
+    // Step 9: Calculate total amount paid
+    const totalAmountPaid = paidEmployees.reduce(
+      (sum, emp) => sum + emp.amountPaid,
+      0,
+    );
+
+    // Step 10: Return detailed response
+    return {
+      message: `Successfully paid ${paidEmployees.length} employee(s) with role "${role}" for ${month}/${year}`,
+      summary: {
+        totalEmployeesInRole: employees.length,
+        totalPaid: paidEmployees.length,
+        totalSkippedNoSalary: skippedNoSalary.length,
+        totalSkippedAlreadyPaid: skippedAlreadyPaid.length,
+        totalAmountPaid: totalAmountPaid,
+      },
+      paidEmployees: paidEmployees,
+      skippedNoSalary: skippedNoSalary,
+      skippedAlreadyPaid: skippedAlreadyPaid,
+    };
+  }
+
+  // ============================================
+  // GET EMPLOYEE SALARY
+  // ============================================
+  /**
+   * View an employee's salary structure and history.
+   *
+   * @param employeeId - The ID of the employee
+   * @returns Employee details, current salary, and complete salary history
+   */
+  async getEmployeeSalary(employeeId: number): Promise<{
+    employee: {
+      id: number;
+      firstName: string;
+      lastName: string;
+      email: string;
+      role: string;
+    };
+    currentSalary: {
+      id: number;
+      amount: number;
+      effectiveDate: Date;
+      createdAt: Date;
+    };
+    salaryHistory: Array<{
+      id: number;
+      amount: number;
+      effectiveDate: Date;
+      createdAt: Date;
+    }>;
+  }> {
+    // Step 1: Find the employee by ID
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 2: If employee doesn't exist, throw NotFoundException
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 3: If employee is soft deleted, throw NotFoundException
+    if (employee.deletedAt) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 4: If the user is an admin, throw NotFoundException
+    // Only employees should have salary records
+    if (employee.role === 'admin') {
+      throw new NotFoundException(
+        `No salary structure found for this user. Admin users do not have salary records.`,
+      );
+    }
+
+    // Step 5: Find ALL salary records for this employee
+    // Order by effectiveDate descending so newest is first
+    const salaryRecords = await this.salaryRepository.find({
+      where: { employeeId: employeeId },
+      order: { effectiveDate: 'DESC' },
+    });
+
+    // Step 6: If no salary records exist, throw NotFoundException
+    if (salaryRecords.length === 0) {
+      throw new NotFoundException(
+        `No salary structure found for this employee`,
+      );
+    }
+
+    // Step 7: The first record (index 0) is the current salary
+    // because we sorted by effectiveDate descending
+    const currentSalary = salaryRecords[0];
+
+    // Step 8: Map salary records to the response format
+    // This removes the employee relationship and keeps only needed fields
+    const salaryHistory = salaryRecords.map((salary) => ({
+      id: salary.id,
+      amount: Number(salary.amount), // Convert decimal to number
+      effectiveDate: salary.effectiveDate,
+      createdAt: salary.createdAt,
+    }));
+
+    // Step 9: Return the response
+    // Employee data is sanitized (no password or refreshToken)
+    return {
+      employee: {
+        id: employee.id,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        email: employee.email,
+        role: employee.role,
+      },
+      currentSalary: {
+        id: currentSalary.id,
+        amount: Number(currentSalary.amount),
+        effectiveDate: currentSalary.effectiveDate,
+        createdAt: currentSalary.createdAt,
+      },
+      salaryHistory: salaryHistory,
+    };
+  }
+
+  // ============================================
+  // PROCESS SALARY PAYMENT (Single Employee)
+  // ============================================
+  /**
+   * Process a salary payment for a single employee.
+   *
+   * @param data - Object containing employeeId, month, year, amountPaid, paymentDate
+   * @returns The created payment record with employee details
+   */
+  async processSalaryPayment(data: {
+    employeeId: number;
+    month: number;
+    year: number;
+    amountPaid: number;
+    paymentDate: string;
+  }): Promise<{
+    message: string;
+    payment: {
+      id: number;
+      month: number;
+      year: number;
+      amountPaid: number;
+      paymentDate: Date;
+      createdAt: Date;
+      employee: {
+        id: number;
+        firstName: string;
+        lastName: string;
+        email: string;
+      };
+    };
+  }> {
+    // Step 1: Extract fields from input data
+    const { employeeId, month, year, amountPaid, paymentDate } = data;
+
+    // Step 2: Validate required fields
+    if (!employeeId) {
+      throw new BadRequestException('employeeId is required');
+    }
+
+    if (!month || month < 1 || month > 12) {
+      throw new BadRequestException('month is required and must be between 1 and 12');
+    }
+
+    if (!year || year < 2000) {
+      throw new BadRequestException('year is required and must be a valid year');
+    }
+
+    if (!amountPaid || amountPaid <= 0) {
+      throw new BadRequestException('amountPaid is required and must be greater than 0');
+    }
+
+    if (!paymentDate) {
+      throw new BadRequestException('paymentDate is required (format: YYYY-MM-DD)');
+    }
+
+    // Step 3: Validate paymentDate format
+    const parsedPaymentDate = new Date(paymentDate);
+    if (isNaN(parsedPaymentDate.getTime())) {
+      throw new BadRequestException('Invalid paymentDate format. Use YYYY-MM-DD');
+    }
+
+    // Step 4: Find the employee by ID
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    // Step 5: If employee doesn't exist, throw NotFoundException
+    if (!employee) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 6: If employee is soft deleted, throw NotFoundException
+    if (employee.deletedAt) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    // Step 7: If the user is an admin, throw BadRequestException
+    // Only employees should receive salary payments
+    if (employee.role === 'admin') {
+      throw new BadRequestException(
+        'Cannot process salary payment for admin users. Only employees can receive salary payments.',
+      );
+    }
+
+    // Step 8: Check if employee has already been paid for this month/year
+    const existingPayment = await this.salaryPaymentRepository.findOne({
+      where: {
+        employeeId: employeeId,
+        month: month,
+        year: year,
+      },
+    });
+
+    // Step 9: If already paid, throw BadRequestException
+    if (existingPayment) {
+      throw new BadRequestException(
+        'Employee has already been paid for this month',
+      );
+    }
+
+    // Step 10: Create the payment record
+    // Note: amountPaid can be any amount - it doesn't have to match salary structure
+    const newPayment = this.salaryPaymentRepository.create({
+      employeeId: employeeId,
+      month: month,
+      year: year,
+      amountPaid: amountPaid,
+      paymentDate: parsedPaymentDate,
+    });
+
+    // Step 11: Save the payment record to the database
+    const savedPayment = await this.salaryPaymentRepository.save(newPayment);
+
+    // Step 12: Return the response with sanitized employee data
+    return {
+      message: `Salary payment processed successfully for ${employee.firstName} ${employee.lastName}`,
+      payment: {
+        id: savedPayment.id,
+        month: savedPayment.month,
+        year: savedPayment.year,
+        amountPaid: Number(savedPayment.amountPaid),
+        paymentDate: savedPayment.paymentDate,
+        createdAt: savedPayment.createdAt,
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+        },
+      },
+    };
+  }
+
+  // ============================================
+  // GET PAYMENT HISTORY
+  // ============================================
+  /**
+   * View salary payment history with optional filters.
+   *
+   * @param filters - Optional filters: employeeId, month, year
+   * @returns Payment records with employee details, total count, and total amount
+   */
+  async getPaymentHistory(filters: {
+    employeeId?: number;
+    month?: number;
+    year?: number;
+  }): Promise<{
+    totalRecords: number;
+    totalAmountPaid: number;
+    payments: Array<{
+      id: number;
+      month: number;
+      year: number;
+      amountPaid: number;
+      paymentDate: Date;
+      createdAt: Date;
+      employee: {
+        id: number;
+        firstName: string;
+        lastName: string;
+        email: string;
+      };
+    }>;
+  }> {
+    // Step 1: Extract filters from input
+    const { employeeId, month, year } = filters;
+
+    // Step 2: Build the query using QueryBuilder
+    // This allows us to add conditions dynamically based on which filters are provided
+    const queryBuilder = this.salaryPaymentRepository
+      .createQueryBuilder('payment')
+      // Join with users table to get employee details
+      .innerJoinAndSelect('payment.employee', 'employee')
+      // Exclude soft deleted employees (deletedAt is null)
+      .where('employee.deletedAt IS NULL');
+
+    // Step 3: Add employeeId filter if provided
+    if (employeeId) {
+      // Convert to number in case it comes as string from query params
+      queryBuilder.andWhere('payment.employeeId = :employeeId', {
+        employeeId: Number(employeeId),
+      });
+    }
+
+    // Step 4: Add month filter if provided
+    if (month) {
+      // Validate month is between 1-12
+      const monthNum = Number(month);
+      if (monthNum >= 1 && monthNum <= 12) {
+        queryBuilder.andWhere('payment.month = :month', { month: monthNum });
+      }
+    }
+
+    // Step 5: Add year filter if provided
+    if (year) {
+      queryBuilder.andWhere('payment.year = :year', { year: Number(year) });
+    }
+
+    // Step 6: Order by paymentDate descending (newest first)
+    queryBuilder.orderBy('payment.paymentDate', 'DESC');
+
+    // Step 7: Execute the query and get all matching records
+    const payments = await queryBuilder.getMany();
+
+    // Step 8: Map payments to response format
+    // This removes sensitive employee data and formats the response
+    const formattedPayments = payments.map((payment) => ({
+      id: payment.id,
+      month: payment.month,
+      year: payment.year,
+      amountPaid: Number(payment.amountPaid), // Convert decimal to number
+      paymentDate: payment.paymentDate,
+      createdAt: payment.createdAt,
+      employee: {
+        id: payment.employee.id,
+        firstName: payment.employee.firstName,
+        lastName: payment.employee.lastName,
+        email: payment.employee.email,
+      },
+    }));
+
+    // Step 9: Calculate total amount paid across all returned records
+    const totalAmountPaid = formattedPayments.reduce(
+      (sum, payment) => sum + payment.amountPaid,
+      0,
+    );
+
+    // Step 10: Return the response
+    return {
+      totalRecords: formattedPayments.length,
+      totalAmountPaid: totalAmountPaid,
+      payments: formattedPayments,
+    };
+  }
+
+  // ============================================
+  // GET PAYROLL REPORTS
+  // ============================================
+  /**
+   * Generate payroll reports showing payment status for each employee.
+   *
+   * @param filters - Optional filters: month, year, role
+   * @returns Summary and per-employee breakdown with payment status
+   */
+  async getPayrollReports(filters: {
+    month?: number;
+    year?: number;
+    role?: string;
+  }): Promise<{
+    summary: {
+      period: { month: number; year: number };
+      totalEmployees: number;
+      totalPaid: number;
+      totalUnpaid: number;
+      totalAmountPaid: number;
+    };
+    employees: Array<{
+      employee: {
+        id: number;
+        firstName: string;
+        lastName: string;
+        email: string;
+        role: string;
+      };
+      currentSalary: number | null;
+      amountPaid: number;
+      paymentStatus: 'paid' | 'unpaid';
+      paymentDate: Date | null;
+    }>;
+  }> {
+    // Step 1: Extract filters and set defaults
+    // If no month/year provided, use current month and year
+    const now = new Date();
+    const month = filters.month ? Number(filters.month) : now.getMonth() + 1; // getMonth() is 0-indexed
+    const year = filters.year ? Number(filters.year) : now.getFullYear();
+    const roleFilter = filters.role;
+
+    // Step 2: Build query to get employees
+    // Only include employees (not admins), exclude soft deleted
+    const employeeQueryBuilder = this.userRepository
+      .createQueryBuilder('user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.role != :adminRole', { adminRole: 'admin' });
+
+    // Step 3: Add role filter if provided
+    // If role is specified, filter by that specific role
+    if (roleFilter && roleFilter.trim() !== '') {
+      employeeQueryBuilder.andWhere('user.role = :role', { role: roleFilter });
+    }
+
+    // Step 4: Execute query to get employees
+    const employees = await employeeQueryBuilder.getMany();
+
+    // Step 5: Initialize result arrays and counters
+    const employeeReports: Array<{
+      employee: {
+        id: number;
+        firstName: string;
+        lastName: string;
+        email: string;
+        role: string;
+      };
+      currentSalary: number | null;
+      amountPaid: number;
+      paymentStatus: 'paid' | 'unpaid';
+      paymentDate: Date | null;
+    }> = [];
+
+    let totalPaid = 0;
+    let totalUnpaid = 0;
+    let totalAmountPaid = 0;
+
+    // Step 6: Process each employee
+    for (const employee of employees) {
+      // Step 6a: Get the employee's current salary (most recent)
+      const currentSalaryRecord = await this.salaryRepository.findOne({
+        where: { employeeId: employee.id },
+        order: { effectiveDate: 'DESC' },
+      });
+
+      // Step 6b: Get the employee's payment for this month/year
+      const payment = await this.salaryPaymentRepository.findOne({
+        where: {
+          employeeId: employee.id,
+          month: month,
+          year: year,
+        },
+      });
+
+      // Step 6c: Determine payment status and amount
+      const isPaid = payment !== null;
+      const amountPaid = payment ? Number(payment.amountPaid) : 0;
+      const paymentDate = payment ? payment.paymentDate : null;
+
+      // Step 6d: Update counters
+      if (isPaid) {
+        totalPaid++;
+        totalAmountPaid += amountPaid;
+      } else {
+        totalUnpaid++;
+      }
+
+      // Step 6e: Add to results array
+      employeeReports.push({
+        employee: {
+          id: employee.id,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+          role: employee.role,
+        },
+        currentSalary: currentSalaryRecord ? Number(currentSalaryRecord.amount) : null,
+        amountPaid: amountPaid,
+        paymentStatus: isPaid ? 'paid' : 'unpaid',
+        paymentDate: paymentDate,
+      });
+    }
+
+    // Step 7: Return the response with summary and employee breakdown
+    return {
+      summary: {
+        period: { month, year },
+        totalEmployees: employees.length,
+        totalPaid: totalPaid,
+        totalUnpaid: totalUnpaid,
+        totalAmountPaid: totalAmountPaid,
+      },
+      employees: employeeReports,
+    };
+  }
+
+  // ============================================
+  // EXPORT PAYROLL REPORT (Excel)
+  // ============================================
+  /**
+   * Generate and export payroll report as Excel file.
+   *
+   * @param filters - Optional filters: month, year, role
+   * @returns Excel file buffer and filename
+   */
+  async exportPayrollReport(filters: {
+    month?: number;
+    year?: number;
+    role?: string;
+  }): Promise<{ buffer: Buffer; filename: string }> {
+    // Step 1: Get current date for defaults
+    const now = new Date();
+    const month = filters.month ? Number(filters.month) : now.getMonth() + 1;
+    const year = filters.year ? Number(filters.year) : now.getFullYear();
+    const roleFilter = filters.role;
+
+    // Step 2: Get month name for display
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    const monthName = monthNames[month - 1];
+
+    // Step 3: Build query to get employees (same logic as getPayrollReports)
+    const employeeQueryBuilder = this.userRepository
+      .createQueryBuilder('user')
+      .where('user.deletedAt IS NULL')
+      .andWhere('user.role != :adminRole', { adminRole: 'admin' });
+
+    if (roleFilter && roleFilter.trim() !== '') {
+      employeeQueryBuilder.andWhere('user.role = :role', { role: roleFilter });
+    }
+
+    const employees = await employeeQueryBuilder.getMany();
+
+    // Step 4: Create a new Excel workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'ZionHome Employee Management System';
+    workbook.created = new Date();
+
+    const worksheet = workbook.addWorksheet('Payroll Report');
+
+    // Step 5: Define columns with headers
+    worksheet.columns = [
+      { header: 'Employee Name', key: 'name', width: 25 },
+      { header: 'Email', key: 'email', width: 30 },
+      { header: 'Role', key: 'role', width: 20 },
+      { header: 'Current Salary', key: 'currentSalary', width: 18 },
+      { header: 'Amount Paid', key: 'amountPaid', width: 15 },
+      { header: 'Payment Status', key: 'paymentStatus', width: 15 },
+      { header: 'Payment Date', key: 'paymentDate', width: 15 },
+    ];
+
+    // Step 6: Style the header row (bold)
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' },
+      };
+      cell.border = {
+        bottom: { style: 'thin' },
+      };
+    });
+
+    // Step 7: Initialize counters for summary
+    let totalPaid = 0;
+    let totalUnpaid = 0;
+    let totalAmountPaid = 0;
+
+    // Step 8: Process each employee and add data rows
+    for (const employee of employees) {
+      // Get current salary
+      const currentSalaryRecord = await this.salaryRepository.findOne({
+        where: { employeeId: employee.id },
+        order: { effectiveDate: 'DESC' },
+      });
+
+      // Get payment for this month/year
+      const payment = await this.salaryPaymentRepository.findOne({
+        where: {
+          employeeId: employee.id,
+          month: month,
+          year: year,
+        },
+      });
+
+      const isPaid = payment !== null;
+      const amountPaid = payment ? Number(payment.amountPaid) : 0;
+
+      if (isPaid) {
+        totalPaid++;
+        totalAmountPaid += amountPaid;
+      } else {
+        totalUnpaid++;
+      }
+
+      // Add row to worksheet
+      // Format payment date - handle both Date objects and string dates from DB
+      let formattedPaymentDate = 'N/A';
+      if (payment && payment.paymentDate) {
+        // Convert to string first to handle any format from DB
+        const dateValue = payment.paymentDate;
+        formattedPaymentDate = new Date(dateValue).toISOString().split('T')[0];
+      }
+
+      worksheet.addRow({
+        name: `${employee.firstName} ${employee.lastName}`,
+        email: employee.email,
+        role: employee.role,
+        currentSalary: currentSalaryRecord ? Number(currentSalaryRecord.amount) : 'Not Set',
+        amountPaid: amountPaid,
+        paymentStatus: isPaid ? 'Paid' : 'Unpaid',
+        paymentDate: formattedPaymentDate,
+      });
+    }
+
+    // Step 9: Add empty row before summary
+    worksheet.addRow({});
+
+    // Step 10: Add summary section
+    const summaryStartRow = worksheet.rowCount + 1;
+
+    worksheet.addRow({ name: `Total Employees: ${employees.length}` });
+    worksheet.addRow({ name: `Total Paid: ${totalPaid}` });
+    worksheet.addRow({ name: `Total Unpaid: ${totalUnpaid}` });
+    worksheet.addRow({ name: `Total Amount Paid: ${totalAmountPaid.toLocaleString()}` });
+    worksheet.addRow({ name: `Period: ${monthName} ${year}` });
+
+    // Step 11: Style summary rows (bold)
+    for (let i = summaryStartRow; i <= worksheet.rowCount; i++) {
+      const row = worksheet.getRow(i);
+      row.font = { bold: true };
+    }
+
+    // Step 12: Generate the Excel file as buffer
+    const excelBuffer = await workbook.xlsx.writeBuffer();
+
+    // Step 13: Generate filename
+    const filename = `Payroll_Report_${monthName}_${year}.xlsx`;
+
+    // Step 14: Return the buffer and filename
+    // Convert to Buffer type for NestJS response
+    return {
+      buffer: Buffer.from(excelBuffer),
+      filename: filename,
+    };
   }
 }
 

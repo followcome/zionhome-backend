@@ -1,32 +1,23 @@
 // DTO for POST /admin/salaries - Create a salary record
-// Documentation Reference: docs/ADMIN.md Section 6
 //
-// Request Body (as documented):
+// Request Body (camelCase):
 // {
-//   "employee_id": 12,
-//   "base_salary": 250000,
-//   "payment_frequency": "monthly",
-//   "allowances": 50000,
-//   "deductions": 20000
+//   "employeeId": 3,
+//   "amount": 200000,
+//   "effectiveDate": "2026-01-01"
 // }
 //
 // Description:
-// - Assigns a base salary to an employee
-// - Defines payment frequency and allowances
+// - Creates a salary structure for an employee
+// - Stores the amount and when it takes effect
 
 export class CreateSalaryDto {
   // The ID of the employee to create salary record for
-  employee_id: number;
+  employeeId: number;
 
-  // Base salary amount
-  base_salary: number;
+  // Salary amount (stored as decimal in database)
+  amount: number;
 
-  // Payment frequency (e.g., "monthly", "weekly", "bi-weekly")
-  payment_frequency: string;
-
-  // Additional allowances amount
-  allowances: number;
-
-  // Deductions amount
-  deductions: number;
+  // The date when this salary takes effect (YYYY-MM-DD format)
+  effectiveDate: string;
 }

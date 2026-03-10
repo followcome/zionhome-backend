@@ -21,6 +21,10 @@ import { LeaveRequest } from './entities/leave-request.entity';
 // Import Attendance entity for attendance tracking
 import { Attendance } from './entities/attendance.entity';
 
+// Import salary management entities
+import { Salary } from './entities/salary.entity';
+import { SalaryPayment } from './entities/salary-payment.entity';
+
 // Import existing app components
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -80,7 +84,7 @@ import { AdminModule } from './admin/admin.module';
         database: configService.get<string>('DB_DATABASE'),
 
         // entities: tells TypeORM which classes represent database tables
-        entities: [User, LeaveAllocation, LeaveRequest, Attendance],
+        entities: [User, LeaveAllocation, LeaveRequest, Attendance, Salary, SalaryPayment],
 
         // synchronize: false - we use migrations instead of auto-sync
         // Auto-sync can cause data loss in production

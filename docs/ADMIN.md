@@ -71,6 +71,12 @@ Update employee details.
 ### DELETE `/admin/employees/{employee_id}`
 Deactivate or delete an employee.
 
+### GET `/admin/employees`
+Get all employees.
+
+### GET `/admin/employees/{employee_id}`
+Get a single employee by ID. 
+
 ### POST `/admin/employees/{employee_id}/roles`
 Assign roles and permissions.
 
@@ -122,9 +128,18 @@ employee_id=12
 
 ## 5. Salary Management
 
-### POST `/admin/salaries`
-Create salary structure.
-
+### ### POST `/admin/salaries/pay-all`
+Process salary payment for all employees in a specific role.
+```json
+{
+  "role": "video editor",
+  "month": 3,
+  "year": 2026,
+  "paymentDate": "2026-03-30"
+}
+```
+Note: Uses each employee's existing salary amount automatically. 
+Skips employees that don't have a salary structure set up.
 ### PATCH `/admin/salaries/{salary_id}`
 Update salary structure.
 

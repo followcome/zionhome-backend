@@ -16,6 +16,12 @@ import { LeaveRequest } from '../entities/leave-request.entity';
 // Import Attendance entity for attendance tracking
 import { Attendance } from '../entities/attendance.entity';
 
+// Import Salary entity for salary management
+import { Salary } from '../entities/salary.entity';
+
+// Import SalaryPayment entity for salary payment tracking
+import { SalaryPayment } from '../entities/salary-payment.entity';
+
 // Import AdminController and AdminService
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
@@ -28,7 +34,7 @@ import { AdminSalaryController } from './admin-salary.controller';
 @Module({
   // imports: External modules this module depends on
   // TypeOrmModule.forFeature([User]) makes Repository<User> available for injection
-  imports: [TypeOrmModule.forFeature([User, LeaveAllocation, LeaveRequest, Attendance])],
+  imports: [TypeOrmModule.forFeature([User, LeaveAllocation, LeaveRequest, Attendance, Salary, SalaryPayment])],
 
   // controllers: Classes that handle incoming HTTP requests
   // AdminController: handles /admin/* routes (employees, settings, attendance, leave)
