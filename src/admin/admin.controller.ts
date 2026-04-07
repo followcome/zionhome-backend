@@ -24,7 +24,12 @@ import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
 
 // Import DTOs for type safety
-import { CreateEmployeeDto, UpdateEmployeeDto, LeaveCalendarQueryDto } from './dto';
+import {
+  CreateEmployeeDto,
+  UpdateEmployeeDto,
+  LeaveCalendarQueryDto,
+  CreateAssetDto,
+} from './dto';
 
 // @Controller('admin') means all routes in this controller start with /admin
 // So the full URL will be: http://localhost:PORT/admin/...
@@ -558,7 +563,7 @@ export class AdminController {
    * Add new asset.
    */
   @Post('assets')
-  async createAsset(@Body() body: any) {
+  async createAsset(@Body() body: CreateAssetDto) {
     return this.adminService.createAsset(body);
   }
 

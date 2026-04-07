@@ -41,9 +41,12 @@ import { Salary } from '../entities/salary.entity';
 
 // Import SalaryPayment entity - represents the salary_payments table
 import { SalaryPayment } from '../entities/salary-payment.entity';
+import { Asset } from '../entities/asset.entity';
+import { AssetAssignment } from '../entities/asset-assignment.entity';
 
 // Import DTOs - define the shape of data for employee operations
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
+import { CreateAssetDto } from './dto';
 
 // @Injectable() marks this class as a "provider"
 // Providers contain business logic and can be shared across the app
@@ -70,6 +73,12 @@ export class AdminService {
 
     @InjectRepository(SalaryPayment)
     private readonly salaryPaymentRepository: Repository<SalaryPayment>,
+
+    @InjectRepository(Asset)
+    private readonly assetRepository: Repository<Asset>,
+
+    @InjectRepository(AssetAssignment)
+    private readonly assetAssignmentRepository: Repository<AssetAssignment>,
   ) {}
 
   // ============================================
@@ -93,7 +102,29 @@ export class AdminService {
   ): Promise<Omit<User, 'password'>> {
     // Step 1: Extract fields from the DTO
     // Destructuring makes the code cleaner and more readable
-    const { email, password,firstName, lastName} = createEmployeeDto;
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      middleName,
+      phone,
+      gender,
+      picture,
+    } = createEmployeeDto;
+
+    const genderNormalized =
+      gender === undefined || gender === null || String(gender).trim() === ''
+        ? null
+        : String(gender).trim();
+
+    if (
+      genderNormalized !== null &&
+      genderNormalized !== 'male' &&
+      genderNormalized !== 'female'
+    ) {
+      throw new BadRequestException("gender must be 'male' or 'female'");
+    }
 
     // Step 2: Check if a user with this email already exists
     // findOne returns the user if found, or null if not found
@@ -120,6 +151,10 @@ export class AdminService {
       password: hashedPassword,
       firstName,
       lastName,
+      middleName: middleName ?? null,
+      phone: phone ?? null,
+      gender: genderNormalized,
+      picture: picture ?? null,
       role: 'employee', // Force role to 'employee' - never trust client input for roles
     });
 
@@ -1190,8 +1225,113 @@ export class AdminService {
     return { message: 'coming soon' };
   }
 
-  async createAsset(body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async createAsset(body: CreateAssetDto): Promise<{
+    message: string;
+    asset: Asset;
+    assignment?: {
+      id: number;
+      assetId: number;
+      employeeId: number;
+      assignedAt: Date;
+      returnedAt: Date | null;
+    };
+  }> {
+    const {
+      assetName,
+      amount,
+      currency,
+      purchasedOn,
+      quantity,
+      description,
+      assignTo,
+      image,
+      receipt,
+    } = body;
+
+    if (!assetName || String(assetName).trim() === '') {
+      throw new BadRequestException('assetName is required');
+    }
+
+    if (amount === undefined || amount === null || Number(amount) <= 0) {
+      throw new BadRequestException('amount is required and must be greater than 0');
+    }
+
+    const normalizedCurrency = String(currency || '').toUpperCase();
+    if (!['GBP', 'USD', 'NGN'].includes(normalizedCurrency)) {
+      throw new BadRequestException("currency must be one of: 'GBP', 'USD', 'NGN'");
+    }
+
+    if (!purchasedOn) {
+      throw new BadRequestException('purchasedOn is required (format: YYYY-MM-DD)');
+    }
+
+    const parsedPurchasedOn = new Date(purchasedOn);
+    if (Number.isNaN(parsedPurchasedOn.getTime())) {
+      throw new BadRequestException(
+        'Invalid purchasedOn format. Use YYYY-MM-DD (e.g., 2026-04-07)',
+      );
+    }
+
+    if (quantity === undefined || quantity === null || Number(quantity) <= 0) {
+      throw new BadRequestException('quantity is required and must be greater than 0');
+    }
+
+    const shouldAssign = assignTo !== undefined && assignTo !== null;
+
+    let employee: User | null = null;
+    if (shouldAssign) {
+      employee = await this.userRepository.findOne({
+        where: { id: Number(assignTo) },
+      });
+
+      if (!employee || employee.deletedAt) {
+        throw new NotFoundException(`Employee with ID ${assignTo} not found`);
+      }
+
+      if (employee.role === 'admin') {
+        throw new BadRequestException('Cannot assign asset to admin user');
+      }
+    }
+
+    const newAsset = this.assetRepository.create({
+      assetName: String(assetName).trim(),
+      amount: Number(amount),
+      currency: normalizedCurrency,
+      purchasedOn: parsedPurchasedOn,
+      quantity: Number(quantity),
+      description: description ?? null,
+      image: image ?? null,
+      receipt: receipt ?? null,
+      status: shouldAssign ? 'assigned' : 'available',
+    });
+
+    const savedAsset = await this.assetRepository.save(newAsset);
+
+    if (!shouldAssign || !employee) {
+      return {
+        message: 'Asset created successfully',
+        asset: savedAsset,
+      };
+    }
+
+    const assignment = this.assetAssignmentRepository.create({
+      assetId: savedAsset.id,
+      employeeId: employee.id,
+    });
+
+    const savedAssignment = await this.assetAssignmentRepository.save(assignment);
+
+    return {
+      message: 'Asset created and assigned successfully',
+      asset: savedAsset,
+      assignment: {
+        id: savedAssignment.id,
+        assetId: savedAssignment.assetId,
+        employeeId: savedAssignment.employeeId,
+        assignedAt: savedAssignment.assignedAt,
+        returnedAt: savedAssignment.returnedAt,
+      },
+    };
   }
 
   async updateAsset(id: string, body: any): Promise<{ message: string }> {

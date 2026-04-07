@@ -4,6 +4,7 @@
 // Employee Management DTOs
 export * from './create-employee.dto';
 export * from './update-employee.dto';
+export * from './create-asset.dto';
 
 // Leave Management DTOs
 export * from './leave-calendar-query.dto';

@@ -32,6 +32,22 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   lastName: string;
 
+  // Optional middle name
+  @Column({ type: 'varchar', nullable: true })
+  middleName: string | null;
+
+  // Optional phone number
+  @Column({ type: 'varchar', nullable: true })
+  phone: string | null;
+
+  // Optional gender: only 'male' or 'female' when set (enforced in API layer on create)
+  @Column({ type: 'varchar', nullable: true })
+  gender: string | null;
+
+  // Optional profile picture URL
+  @Column({ type: 'varchar', nullable: true })
+  picture: string | null;
+
   // Failed login attempts (increments on every failed login)
   // Does NOT reset with time; resets only on successful login or password reset
   @Column({ type: 'int', default: 0 })

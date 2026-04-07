@@ -17,4 +17,16 @@ export class CreateEmployeeDto {
 
   // Employee's last name
   lastName: string;
+
+  // Optional middle name
+  middleName?: string;
+
+  // Optional phone number
+  phone?: string;
+
+  // Optional; when provided must be 'male' or 'female' (validated in service)
+  gender?: 'male' | 'female';
+
+  // Optional profile picture URL
+  picture?: string;
 }
