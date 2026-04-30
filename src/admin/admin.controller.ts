@@ -273,7 +273,7 @@ export class AdminController {
    *
    * Returns: Attendance report with per-employee summary including:
    * - presentDays: days marked attendance
-   * - onLeaveDays: days on approved leave
+   * - onLeaveDays: days on granted leave
    * - absentDays: working days not present and not on leave
    * - attendancePercentage: (presentDays / workingDays) * 100
    *
@@ -333,7 +333,7 @@ export class AdminController {
    * View all leave requests submitted by employees.
    *
    * Query Parameters (all optional):
-   * - status: Filter by 'pending', 'approved', or 'denied'
+   * - status: Filter by 'pending', 'granted', 'rejected', or 'expired'
    * - employeeId: Filter by specific employee ID
    * - year: Filter by year based on the startDate
    *
@@ -364,7 +364,7 @@ export class AdminController {
    * Approve a leave request.
    *
    * Performs all of the following in one operation:
-   * - Updates leave request status to 'approved'
+   * - Updates leave request status to 'granted'
    * - Sets reviewedBy to the current admin's user ID
    * - Sets reviewedAt to current timestamp
    * - Deducts numberOfDays from employee's leave allocation (remainingDays)
@@ -372,7 +372,7 @@ export class AdminController {
    *
    * Throws:
    *   - NotFoundException (404) if leave request doesn't exist
-   *   - BadRequestException (400) if request is already approved/denied
+   *   - BadRequestException (400) if request is already granted/rejected
    *   - BadRequestException (400) if employee has no allocation for that year
    *   - BadRequestException (400) if employee doesn't have enough remaining days
    */
@@ -391,14 +391,14 @@ export class AdminController {
    * Deny a leave request.
    *
    * Performs all of the following in one operation:
-   * - Updates leave request status to 'denied'
+   * - Updates leave request status to 'rejected'
    * - Sets reviewedBy to the current admin's user ID
    * - Sets reviewedAt to current timestamp
    * - Does NOT touch leave_allocations (no days deducted)
    *
    * Throws:
    *   - NotFoundException (404) if leave request doesn't exist
-   *   - BadRequestException (400) if request is already approved/denied
+   *   - BadRequestException (400) if request is already granted/rejected
    */
   @Patch('leaves/requests/:request_id/deny')
   async denyLeaveRequest(

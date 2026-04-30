@@ -54,12 +54,12 @@ export class LeaveRequest {
   reason: string;
 
   // Status of the leave request
-  // Can be: 'pending', 'approved', or 'denied'
+  // Can be: 'pending', 'granted', 'rejected', or 'expired'
   // Default is 'pending' when employee submits a new request
   @Column({ type: 'varchar', default: 'pending' })
   status: string;
 
-  // ID of the admin who reviewed (approved/denied) the request
+  // ID of the admin who reviewed (granted/rejected) the request
   // { nullable: true } because it's null until reviewed
   @Column({ type: 'int', nullable: true })
   reviewedBy: number | null;

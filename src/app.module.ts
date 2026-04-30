@@ -26,6 +26,8 @@ import { Salary } from './entities/salary.entity';
 import { SalaryPayment } from './entities/salary-payment.entity';
 import { Asset } from './entities/asset.entity';
 import { AssetAssignment } from './entities/asset-assignment.entity';
+import { Document } from './entities/document.entity';
+import { DocumentAssignment } from './entities/document-assignment.entity';
 
 // Import existing app components
 import { AppController } from './app.controller';
@@ -36,6 +38,7 @@ import { AuthModule } from './auth/auth.module';
 
 // Import AdminModule for admin routes
 import { AdminModule } from './admin/admin.module';
+import { StaffModule } from './staff/staff.module';
 
 // @Module() defines this class as a NestJS module
 @Module({
@@ -95,6 +98,8 @@ import { AdminModule } from './admin/admin.module';
           SalaryPayment,
           Asset,
           AssetAssignment,
+          Document,
+          DocumentAssignment,
         ],
 
         // synchronize: false - we use migrations instead of auto-sync
@@ -113,6 +118,9 @@ import { AdminModule } from './admin/admin.module';
 
     // AdminModule contains admin-only routes (protected by AdminGuard)
     AdminModule,
+
+    // StaffModule contains staff routes (protected by JwtAuthGuard)
+    StaffModule,
   ],
 
   // Controllers handle incoming HTTP requests

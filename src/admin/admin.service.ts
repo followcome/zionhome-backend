@@ -518,8 +518,8 @@ export class AdminService {
           .andWhere('attendance.date <= :endDate', { endDate: endDateStr })
           .getCount();
 
-        // Step 8b: Calculate approved leave days in the period
-        // We need to count days from approved leave requests that fall within this period
+        // Step 8b: Calculate granted leave days in the period
+        // We need to count days from granted leave requests that fall within this period
         const onLeaveDays = await this.calculateApprovedLeaveDays(
           employee.id,
           startDate,
@@ -596,24 +596,24 @@ export class AdminService {
   }
 
   /**
-   * Helper: Calculate approved leave days for an employee within a date range.
+   * Helper: Calculate granted leave days for an employee within a date range.
    *
    * @param employeeId - The employee's ID
    * @param startDate - Start of the period
    * @param endDate - End of the period
-   * @returns Number of approved leave days in the period
+   * @returns Number of granted leave days in the period
    */
   private async calculateApprovedLeaveDays(
     employeeId: number,
     startDate: Date,
     endDate: Date,
   ): Promise<number> {
-    // Get all approved leave requests for this employee
+    // Get all granted leave requests for this employee
     // that overlap with the given period
     const leaveRequests = await this.leaveRequestRepository
       .createQueryBuilder('leave')
       .where('leave.employeeId = :employeeId', { employeeId })
-      .andWhere('leave.status = :status', { status: 'approved' })
+      .andWhere('leave.status = :status', { status: 'granted' })
       // Leave request overlaps with period if:
       // startDate <= period end AND endDate >= period start
       .andWhere('leave.startDate <= :endDate', {
@@ -752,7 +752,7 @@ export class AdminService {
    * Get all leave requests submitted by employees.
    *
    * @param filters - Optional query parameters for filtering:
-   *   - status: Filter by 'pending', 'approved', or 'denied'
+   *   - status: Filter by 'pending', 'granted', 'rejected', or 'expired'
    *   - employeeId: Filter by specific employee ID
    *   - year: Filter by year based on the startDate
    *
@@ -845,7 +845,7 @@ export class AdminService {
    * @param requestId - The ID of the leave request to approve
    * @param adminId - The ID of the admin approving the request (from JWT)
    *
-   * @returns Success message with the approved leave request details
+   * @returns Success message with the granted leave request details
    * @throws NotFoundException if leave request doesn't exist
    * @throws BadRequestException if request is already reviewed
    * @throws BadRequestException if no leave allocation for that year
@@ -874,8 +874,8 @@ export class AdminService {
       throw new NotFoundException(`Leave request with ID ${requestId} not found`);
     }
 
-    // Step 4: Check if request is already reviewed (approved or denied)
-    // Only pending requests can be approved
+    // Step 4: Check if request is already reviewed (granted or rejected)
+    // Only pending requests can be granted
     if (leaveRequest.status !== 'pending') {
       throw new BadRequestException(
         'This leave request has already been reviewed and cannot be changed',
@@ -909,10 +909,10 @@ export class AdminService {
     }
 
     // Step 9: Update the leave request
-    // - Set status to 'approved'
+    // - Set status to 'granted'
     // - Set reviewedBy to the admin's ID
     // - Set reviewedAt to current timestamp
-    leaveRequest.status = 'approved';
+    leaveRequest.status = 'granted';
     leaveRequest.reviewedBy = adminId;
     leaveRequest.reviewedAt = new Date();
 
@@ -933,7 +933,7 @@ export class AdminService {
 
     // Step 13: Return success response
     return {
-      message: `Leave request approved successfully. ${leaveRequest.numberOfDays} days deducted from allocation.`,
+      message: `Leave request granted successfully. ${leaveRequest.numberOfDays} days deducted from allocation.`,
       leaveRequest: {
         ...requestData,
         employee: {
@@ -952,7 +952,7 @@ export class AdminService {
    * @param requestId - The ID of the leave request to deny
    * @param adminId - The ID of the admin denying the request (from JWT)
    *
-   * @returns Success message with the denied leave request details
+   * @returns Success message with the rejected leave request details
    * @throws NotFoundException if leave request doesn't exist
    * @throws BadRequestException if request is already reviewed
    */
@@ -979,8 +979,8 @@ export class AdminService {
       throw new NotFoundException(`Leave request with ID ${requestId} not found`);
     }
 
-    // Step 4: Check if request is already reviewed (approved or denied)
-    // Only pending requests can be denied
+    // Step 4: Check if request is already reviewed (granted or rejected)
+    // Only pending requests can be rejected
     if (leaveRequest.status !== 'pending') {
       throw new BadRequestException(
         'This leave request has already been reviewed and cannot be changed',
@@ -988,11 +988,11 @@ export class AdminService {
     }
 
     // Step 5: Update the leave request
-    // - Set status to 'denied'
+    // - Set status to 'rejected'
     // - Set reviewedBy to the admin's ID
     // - Set reviewedAt to current timestamp
-    // Note: We do NOT touch leave_allocations - no days are deducted for denied requests
-    leaveRequest.status = 'denied';
+    // Note: We do NOT touch leave_allocations - no days are deducted for rejected requests
+    leaveRequest.status = 'rejected';
     leaveRequest.reviewedBy = adminId;
     leaveRequest.reviewedAt = new Date();
 
@@ -1004,7 +1004,7 @@ export class AdminService {
 
     // Step 8: Return success response
     return {
-      message: 'Leave request denied successfully.',
+      message: 'Leave request rejected successfully.',
       leaveRequest: {
         ...requestData,
         employee: {
@@ -1086,14 +1086,14 @@ export class AdminService {
   }
 
   /**
-   * Get leave calendar - shows approved leave requests for calendar display.
+   * Get leave calendar - shows granted leave requests for calendar display.
    *
    * @param query - Optional query parameters:
    *   - year: Filter by year
    *   - month: Filter by month (1-12)
    *   - employee_id: Filter by specific employee ID
    *
-   * @returns Array of approved leave requests formatted for calendar display
+   * @returns Array of granted leave requests formatted for calendar display
    */
   async getLeaveCalendar(query: {
     year?: number;
@@ -1119,8 +1119,8 @@ export class AdminService {
       // Step 2: Join with user table to get employee details
       // 'INNER JOIN' excludes leave requests where employee is soft-deleted
       .innerJoinAndSelect('leaveRequest.employee', 'employee')
-      // Step 3: Only get APPROVED leave requests
-      .where('leaveRequest.status = :status', { status: 'approved' })
+      // Step 3: Only get GRANTED leave requests
+      .where('leaveRequest.status = :status', { status: 'granted' })
       // Step 4: Exclude soft-deleted employees
       .andWhere('employee.deletedAt IS NULL');
 
