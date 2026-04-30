@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { User } from '../entities/user.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
@@ -13,6 +13,7 @@ import { Salary } from '../entities/salary.entity';
 import { SalaryPayment } from '../entities/salary-payment.entity';
 import { Document } from '../entities/document.entity';
 import { DocumentAssignment } from '../entities/document-assignment.entity';
+import { AssetAssignment } from '../entities/asset-assignment.entity';
 
 @Injectable()
 export class StaffService {
@@ -33,6 +34,8 @@ export class StaffService {
     private readonly documentRepository: Repository<Document>,
     @InjectRepository(DocumentAssignment)
     private readonly documentAssignmentRepository: Repository<DocumentAssignment>,
+    @InjectRepository(AssetAssignment)
+    private readonly assetAssignmentRepository: Repository<AssetAssignment>,
   ) {}
 
   async getDashboard(_staffId: number): Promise<{ message: string }> {
@@ -824,8 +827,72 @@ export class StaffService {
     };
   }
 
-  async getAssets(_staffId: number): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async getAssets(staffId: number): Promise<{
+    message: string;
+    count: number;
+    assets: Array<{
+      id: number;
+      assetName: string;
+      status: string;
+      amount: number;
+      currency: string;
+      purchasedOn: Date;
+      quantity: number;
+      description: string | null;
+      assignedAt: Date;
+    }>;
+  }> {
+    return this.getMyAssets(staffId);
+  }
+
+  async getMyAssets(staffId: number): Promise<{
+    message: string;
+    count: number;
+    assets: Array<{
+      id: number;
+      assetName: string;
+      status: string;
+      amount: number;
+      currency: string;
+      purchasedOn: Date;
+      quantity: number;
+      description: string | null;
+      assignedAt: Date;
+    }>;
+  }> {
+    const assignments = await this.assetAssignmentRepository.find({
+      where: {
+        employeeId: staffId,
+        returnedAt: IsNull(),
+        asset: {
+          deletedAt: IsNull(),
+        },
+      },
+      relations: {
+        asset: true,
+      },
+      order: {
+        assignedAt: 'DESC',
+      },
+    });
+
+    const assets = assignments.map((assignment) => ({
+      id: assignment.asset.id,
+      assetName: assignment.asset.assetName,
+      status: assignment.asset.status,
+      amount: Number(assignment.asset.amount),
+      currency: assignment.asset.currency,
+      purchasedOn: assignment.asset.purchasedOn,
+      quantity: assignment.asset.quantity,
+      description: assignment.asset.description,
+      assignedAt: assignment.assignedAt,
+    }));
+
+    return {
+      message: 'Assigned assets retrieved successfully',
+      count: assets.length,
+      assets,
+    };
   }
 
   async getAssetById(_staffId: number, _assetId: string): Promise<{ message: string }> {
