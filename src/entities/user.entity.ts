@@ -65,7 +65,7 @@ export class User {
   // When they log out or token is rotated, old token is replaced
   // This will be: refresh_token VARCHAR(255) NULL
   @Column({ type: 'varchar', nullable: true })
-  refreshToken: string;
+  refreshToken: string | null;
 
   // Role column to store user's role (admin or employee)
   // { type: 'varchar' } tells TypeORM this is a string column

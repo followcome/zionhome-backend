@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
+import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
 import { Attendance } from '../entities/attendance.entity';
 import { LeaveRequest } from '../entities/leave-request.entity';
@@ -44,8 +45,224 @@ export class StaffService {
     private readonly notificationRepository: Repository<Notification>,
   ) {}
 
-  async getDashboard(_staffId: number): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async getDashboard(staffId: number): Promise<{
+    message: string;
+    profile: {
+      firstName: string;
+      lastName: string;
+      email: string;
+      role: string;
+      picture: string | null;
+    };
+    attendanceSummary: {
+      presentDays: number;
+      totalWorkingDays: number;
+      absentDays: number;
+      onLeaveDays: number;
+    };
+    leaveBalance: {
+      totalLeaveDays: number;
+      usedDays: number;
+      remainingDays: number;
+      pendingDays: number;
+    } | null;
+    salarySummary: {
+      currentSalary: number;
+      lastPayment: {
+        amount: number;
+        date: Date;
+        month: number;
+        year: number;
+      } | null;
+    } | null;
+    assets: {
+      assignedAssetsCount: number;
+      assignedAssets: string[];
+    };
+    documents: {
+      assignedDocumentsCount: number;
+    };
+    notifications: {
+      unreadCount: number;
+      recentNotifications: Array<{
+        id: number;
+        title: string;
+        message: string;
+        isRead: boolean;
+        createdAt: Date;
+      }>;
+    };
+  }> {
+    const user = await this.userRepository.findOne({
+      where: { id: staffId },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException(`User with ID ${staffId} not found`);
+    }
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const monthStart = new Date(currentYear, currentMonth, 1);
+    const monthEnd = new Date(currentYear, currentMonth + 1, 0);
+
+    const [
+      presentDays,
+      grantedLeaveRequests,
+      leaveAllocation,
+      pendingLeaveResult,
+      currentSalary,
+      lastPaymentRecord,
+      activeAssetAssignments,
+      assignedDocumentsCount,
+      unreadNotificationsCount,
+      recentNotificationRecords,
+    ] = await Promise.all([
+      this.attendanceRepository
+        .createQueryBuilder('attendance')
+        .where('attendance.employeeId = :staffId', { staffId })
+        .andWhere('attendance.date >= :startDate', {
+          startDate: this.toISODate(monthStart),
+        })
+        .andWhere('attendance.date <= :endDate', {
+          endDate: this.toISODate(monthEnd),
+        })
+        .getCount(),
+      this.leaveRequestRepository
+        .createQueryBuilder('leaveRequest')
+        .where('leaveRequest.employeeId = :staffId', { staffId })
+        .andWhere('leaveRequest.status = :status', { status: 'granted' })
+        .andWhere('leaveRequest.startDate <= :endDate', {
+          endDate: this.toISODate(monthEnd),
+        })
+        .andWhere('leaveRequest.endDate >= :startDate', {
+          startDate: this.toISODate(monthStart),
+        })
+        .getMany(),
+      this.leaveAllocationRepository.findOne({
+        where: {
+          employeeId: staffId,
+          year: currentYear,
+        },
+      }),
+      this.leaveRequestRepository
+        .createQueryBuilder('leaveRequest')
+        .select('COALESCE(SUM(leaveRequest.numberOfDays), 0)', 'pendingDays')
+        .where('leaveRequest.employeeId = :staffId', { staffId })
+        .andWhere('leaveRequest.status = :status', { status: 'pending' })
+        .andWhere('EXTRACT(YEAR FROM leaveRequest.startDate) = :year', {
+          year: currentYear,
+        })
+        .getRawOne<{ pendingDays: string }>(),
+      this.salaryRepository.findOne({
+        where: { employeeId: staffId },
+        order: { effectiveDate: 'DESC' },
+      }),
+      this.salaryPaymentRepository.findOne({
+        where: { employeeId: staffId },
+        order: { paymentDate: 'DESC' },
+      }),
+      this.assetAssignmentRepository.find({
+        where: {
+          employeeId: staffId,
+          returnedAt: IsNull(),
+          asset: {
+            deletedAt: IsNull(),
+          },
+        },
+        relations: {
+          asset: true,
+        },
+        order: {
+          assignedAt: 'DESC',
+        },
+      }),
+      this.documentAssignmentRepository.count({
+        where: { employeeId: staffId },
+      }),
+      this.notificationRepository.count({
+        where: {
+          userId: staffId,
+          isRead: false,
+        },
+      }),
+      this.notificationRepository.find({
+        where: { userId: staffId },
+        order: { createdAt: 'DESC' },
+        take: 5,
+      }),
+    ]);
+
+    let onLeaveDays = 0;
+    for (const leaveRequest of grantedLeaveRequests) {
+      const overlapStart =
+        leaveRequest.startDate > monthStart ? leaveRequest.startDate : monthStart;
+      const overlapEnd = leaveRequest.endDate < monthEnd ? leaveRequest.endDate : monthEnd;
+      onLeaveDays += this.calculateWorkingDaysBetween(overlapStart, overlapEnd);
+    }
+
+    const totalWorkingDays = this.calculateWorkingDaysInMonth(currentYear, currentMonth);
+    const absentDays = Math.max(0, totalWorkingDays - presentDays - onLeaveDays);
+
+    const leaveBalance = leaveAllocation
+      ? {
+          totalLeaveDays: leaveAllocation.totalLeaveDays,
+          usedDays: leaveAllocation.usedDays,
+          remainingDays: leaveAllocation.remainingDays,
+          pendingDays: Number(pendingLeaveResult?.pendingDays ?? 0),
+        }
+      : null;
+
+    const salarySummary = currentSalary
+      ? {
+          currentSalary: Number(currentSalary.amount),
+          lastPayment: lastPaymentRecord
+            ? {
+                amount: Number(lastPaymentRecord.amountPaid),
+                date: lastPaymentRecord.paymentDate,
+                month: lastPaymentRecord.month,
+                year: lastPaymentRecord.year,
+              }
+            : null,
+        }
+      : null;
+
+    return {
+      message: 'Dashboard retrieved successfully',
+      profile: {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        picture: user.picture,
+      },
+      attendanceSummary: {
+        presentDays,
+        totalWorkingDays,
+        absentDays,
+        onLeaveDays,
+      },
+      leaveBalance,
+      salarySummary,
+      assets: {
+        assignedAssetsCount: activeAssetAssignments.length,
+        assignedAssets: activeAssetAssignments.map((assignment) => assignment.asset.assetName),
+      },
+      documents: {
+        assignedDocumentsCount,
+      },
+      notifications: {
+        unreadCount: unreadNotificationsCount,
+        recentNotifications: recentNotificationRecords.map((notification) => ({
+          id: notification.id,
+          title: notification.title,
+          message: notification.message,
+          isRead: notification.isRead,
+          createdAt: notification.createdAt,
+        })),
+      },
+    };
   }
 
   async getProfile(
@@ -307,6 +524,12 @@ export class StaffService {
     }
 
     return workingDays;
+  }
+
+  private calculateWorkingDaysInMonth(year: number, zeroBasedMonth: number): number {
+    const start = new Date(year, zeroBasedMonth, 1);
+    const end = new Date(year, zeroBasedMonth + 1, 0);
+    return this.calculateWorkingDaysBetween(start, end);
   }
 
   private parseISODate(value: string): Date | null {
@@ -1049,11 +1272,77 @@ export class StaffService {
     return { message: 'coming soon' };
   }
 
-  async updatePassword(_staffId: number, _body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async updatePassword(
+    staffId: number,
+    body: {
+      currentPassword: string;
+      newPassword: string;
+      confirmPassword: string;
+    },
+  ): Promise<{ message: string }> {
+    return this.changePassword(staffId, body);
   }
 
-  async logout(_staffId: number): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async changePassword(
+    staffId: number,
+    body: {
+      currentPassword: string;
+      newPassword: string;
+      confirmPassword: string;
+    },
+  ): Promise<{ message: string }> {
+    const { currentPassword, newPassword, confirmPassword } = body;
+
+    const user = await this.userRepository.findOne({
+      where: { id: staffId },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException(`User with ID ${staffId} not found`);
+    }
+
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    if (newPassword !== confirmPassword) {
+      throw new BadRequestException('New passwords do not match');
+    }
+
+    if (newPassword === currentPassword) {
+      throw new BadRequestException('New password must be different from current password');
+    }
+
+    if (String(newPassword).length < 6) {
+      throw new BadRequestException('New password must be at least 6 characters');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await this.userRepository.update(staffId, {
+      password: hashedPassword,
+      refreshToken: null,
+    });
+
+    return {
+      message: 'Password changed successfully. Please login again.',
+    };
+  }
+
+  async logout(staffId: number): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { id: staffId },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException(`User with ID ${staffId} not found`);
+    }
+
+    await this.userRepository.update(staffId, {
+      refreshToken: null,
+    });
+
+    return { message: 'Staff logged out successfully' };
   }
 }
