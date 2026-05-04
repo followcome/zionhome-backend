@@ -10,6 +10,7 @@ import { Document } from '../entities/document.entity';
 import { DocumentAssignment } from '../entities/document-assignment.entity';
 import { Asset } from '../entities/asset.entity';
 import { AssetAssignment } from '../entities/asset-assignment.entity';
+import { Notification } from '../entities/notification.entity';
 import { StaffController } from './staff.controller';
 import { StaffService } from './staff.service';
 
@@ -26,6 +27,7 @@ import { StaffService } from './staff.service';
       DocumentAssignment,
       Asset,
       AssetAssignment,
+      Notification,
     ]),
   ],
   controllers: [StaffController],

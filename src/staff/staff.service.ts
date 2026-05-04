@@ -13,7 +13,9 @@ import { Salary } from '../entities/salary.entity';
 import { SalaryPayment } from '../entities/salary-payment.entity';
 import { Document } from '../entities/document.entity';
 import { DocumentAssignment } from '../entities/document-assignment.entity';
+import { Asset } from '../entities/asset.entity';
 import { AssetAssignment } from '../entities/asset-assignment.entity';
+import { Notification } from '../entities/notification.entity';
 
 @Injectable()
 export class StaffService {
@@ -34,8 +36,12 @@ export class StaffService {
     private readonly documentRepository: Repository<Document>,
     @InjectRepository(DocumentAssignment)
     private readonly documentAssignmentRepository: Repository<DocumentAssignment>,
+    @InjectRepository(Asset)
+    private readonly assetRepository: Repository<Asset>,
     @InjectRepository(AssetAssignment)
     private readonly assetAssignmentRepository: Repository<AssetAssignment>,
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
   ) {}
 
   async getDashboard(_staffId: number): Promise<{ message: string }> {
@@ -895,12 +901,144 @@ export class StaffService {
     };
   }
 
-  async getAssetById(_staffId: number, _assetId: string): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async getAssetById(
+    staffId: number,
+    assetId: string,
+  ): Promise<{
+    message: string;
+    asset: {
+      id: number;
+      assetName: string;
+      status: string;
+      amount: number;
+      currency: string;
+      purchasedOn: Date;
+      quantity: number;
+      description: string | null;
+      assignedAt: Date;
+    };
+  }> {
+    return this.getMyAsset(staffId, assetId);
   }
 
-  async getNotifications(_staffId: number): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async getMyAsset(
+    staffId: number,
+    assetId: string,
+  ): Promise<{
+    message: string;
+    asset: {
+      id: number;
+      assetName: string;
+      status: string;
+      amount: number;
+      currency: string;
+      purchasedOn: Date;
+      quantity: number;
+      description: string | null;
+      assignedAt: Date;
+    };
+  }> {
+    const parsedAssetId = Number(assetId);
+    if (!Number.isInteger(parsedAssetId) || parsedAssetId <= 0) {
+      throw new NotFoundException('Asset not found');
+    }
+
+    const asset = await this.assetAssignmentRepository.findOne({
+      where: {
+        assetId: parsedAssetId,
+        employeeId: staffId,
+        returnedAt: IsNull(),
+        asset: {
+          deletedAt: IsNull(),
+        },
+      },
+      relations: {
+        asset: true,
+      },
+      order: {
+        assignedAt: 'DESC',
+      },
+    });
+
+    if (!asset) {
+      const existingAsset = await this.assetRepository.findOne({
+        where: { id: parsedAssetId },
+        withDeleted: true,
+      });
+
+      if (!existingAsset || existingAsset.deletedAt) {
+        throw new NotFoundException('Asset not found');
+      }
+
+      throw new NotFoundException('Asset not found or not assigned to you');
+    }
+
+    return {
+      message: 'Asset retrieved successfully',
+      asset: {
+        id: asset.asset.id,
+        assetName: asset.asset.assetName,
+        status: asset.asset.status,
+        amount: Number(asset.asset.amount),
+        currency: asset.asset.currency,
+        purchasedOn: asset.asset.purchasedOn,
+        quantity: asset.asset.quantity,
+        description: asset.asset.description,
+        assignedAt: asset.assignedAt,
+      },
+    };
+  }
+
+  async getNotifications(staffId: number): Promise<{
+    message: string;
+    count: number;
+    unreadCount: number;
+    notifications: Array<{
+      id: number;
+      title: string;
+      message: string;
+      isRead: boolean;
+      createdAt: Date;
+    }>;
+  }> {
+    return this.getMyNotifications(staffId);
+  }
+
+  async getMyNotifications(staffId: number): Promise<{
+    message: string;
+    count: number;
+    unreadCount: number;
+    notifications: Array<{
+      id: number;
+      title: string;
+      message: string;
+      isRead: boolean;
+      createdAt: Date;
+    }>;
+  }> {
+    const notifications = await this.notificationRepository.find({
+      where: { userId: staffId },
+      order: { createdAt: 'DESC' },
+    });
+
+    const responseNotifications = notifications.map((notification) => ({
+      id: notification.id,
+      title: notification.title,
+      message: notification.message,
+      isRead: notification.isRead,
+      createdAt: notification.createdAt,
+    }));
+
+    const unreadCount = responseNotifications.filter(
+      (notification) => notification.isRead === false,
+    ).length;
+
+    return {
+      message: 'Notifications retrieved successfully',
+      count: responseNotifications.length,
+      unreadCount,
+      notifications: responseNotifications,
+    };
   }
 
   async getActivities(_staffId: number): Promise<{ message: string }> {

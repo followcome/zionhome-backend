@@ -23,6 +23,9 @@ import { Salary } from '../entities/salary.entity';
 import { SalaryPayment } from '../entities/salary-payment.entity';
 import { Asset } from '../entities/asset.entity';
 import { AssetAssignment } from '../entities/asset-assignment.entity';
+import { Document } from '../entities/document.entity';
+import { DocumentAssignment } from '../entities/document-assignment.entity';
+import { Notification } from '../entities/notification.entity';
 
 // Import AdminController and AdminService
 import { AdminController } from './admin.controller';
@@ -46,6 +49,9 @@ import { AdminSalaryController } from './admin-salary.controller';
       SalaryPayment,
       Asset,
       AssetAssignment,
+      Document,
+      DocumentAssignment,
+      Notification,
     ]),
   ],
 

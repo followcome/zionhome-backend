@@ -15,7 +15,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 // Import Repository type and Not operator from TypeORM
 // Repository provides methods to interact with the database (find, save, create, etc.)
 // Not is used to exclude the current user when checking for duplicate emails
-import { Repository, Not } from 'typeorm';
+import { Repository, Not, IsNull } from 'typeorm';
 
 // Import bcrypt for password hashing
 // bcrypt is a secure hashing algorithm designed for passwords
@@ -43,6 +43,9 @@ import { Salary } from '../entities/salary.entity';
 import { SalaryPayment } from '../entities/salary-payment.entity';
 import { Asset } from '../entities/asset.entity';
 import { AssetAssignment } from '../entities/asset-assignment.entity';
+import { Document } from '../entities/document.entity';
+import { DocumentAssignment } from '../entities/document-assignment.entity';
+import { Notification } from '../entities/notification.entity';
 
 // Import DTOs - define the shape of data for employee operations
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
@@ -79,6 +82,15 @@ export class AdminService {
 
     @InjectRepository(AssetAssignment)
     private readonly assetAssignmentRepository: Repository<AssetAssignment>,
+
+    @InjectRepository(Document)
+    private readonly documentRepository: Repository<Document>,
+
+    @InjectRepository(DocumentAssignment)
+    private readonly documentAssignmentRepository: Repository<DocumentAssignment>,
+
+    @InjectRepository(Notification)
+    private readonly notificationRepository: Repository<Notification>,
   ) {}
 
   // ============================================
@@ -734,6 +746,14 @@ export class AdminService {
     const savedAllocation =
       await this.leaveAllocationRepository.save(newAllocation);
 
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employeeId,
+        title: 'Leave Allocated',
+        message: `You have been allocated ${totalLeaveDays} leave days for ${year}`,
+      }),
+    );
+
     // Step 9: Remove sensitive fields from the employee data
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, refreshToken, ...employeeData } = employee;
@@ -1214,7 +1234,65 @@ export class AdminService {
   }
 
   async assignDocument(id: string, body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+    const documentId = parseInt(id, 10);
+    const employeeId = Number(body?.employeeId);
+
+    if (!Number.isInteger(documentId) || documentId <= 0) {
+      throw new BadRequestException('Invalid document id');
+    }
+
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      throw new BadRequestException('employeeId is required and must be a valid number');
+    }
+
+    const document = await this.documentRepository.findOne({
+      where: { id: documentId },
+      withDeleted: true,
+    });
+
+    if (!document || document.deletedAt) {
+      throw new NotFoundException(`Document with ID ${documentId} not found`);
+    }
+
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    if (!employee || employee.deletedAt) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    if (employee.role === 'admin') {
+      throw new BadRequestException('Cannot assign document to admin user');
+    }
+
+    const existingAssignment = await this.documentAssignmentRepository.findOne({
+      where: {
+        documentId: document.id,
+        employeeId: employee.id,
+      },
+    });
+
+    if (existingAssignment) {
+      throw new BadRequestException('Document is already assigned to this employee');
+    }
+
+    await this.documentAssignmentRepository.save(
+      this.documentAssignmentRepository.create({
+        documentId: document.id,
+        employeeId: employee.id,
+      }),
+    );
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employee.id,
+        title: 'Document Assigned',
+        message: `A new document '${document.title}' has been assigned to you`,
+      }),
+    );
+
+    return { message: 'Document assigned successfully' };
   }
 
   async getAllDocuments(): Promise<{ message: string }> {
@@ -1339,7 +1417,73 @@ export class AdminService {
   }
 
   async assignAsset(id: string, body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+    const assetId = parseInt(id, 10);
+    const employeeId = Number(body?.employeeId);
+
+    if (!Number.isInteger(assetId) || assetId <= 0) {
+      throw new BadRequestException('Invalid asset id');
+    }
+
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      throw new BadRequestException('employeeId is required and must be a valid number');
+    }
+
+    const asset = await this.assetRepository.findOne({
+      where: { id: assetId },
+      withDeleted: true,
+    });
+
+    if (!asset || asset.deletedAt) {
+      throw new NotFoundException(`Asset with ID ${assetId} not found`);
+    }
+
+    const employee = await this.userRepository.findOne({
+      where: { id: employeeId },
+    });
+
+    if (!employee || employee.deletedAt) {
+      throw new NotFoundException(`Employee with ID ${employeeId} not found`);
+    }
+
+    if (employee.role === 'admin') {
+      throw new BadRequestException('Cannot assign asset to admin user');
+    }
+
+    const activeAssignment = await this.assetAssignmentRepository.findOne({
+      where: {
+        assetId: asset.id,
+        returnedAt: IsNull(),
+      },
+    });
+
+    if (activeAssignment && activeAssignment.employeeId === employee.id) {
+      throw new BadRequestException('Asset is already assigned to this employee');
+    }
+
+    if (activeAssignment) {
+      activeAssignment.returnedAt = new Date();
+      await this.assetAssignmentRepository.save(activeAssignment);
+    }
+
+    await this.assetAssignmentRepository.save(
+      this.assetAssignmentRepository.create({
+        assetId: asset.id,
+        employeeId: employee.id,
+      }),
+    );
+
+    asset.status = 'assigned';
+    await this.assetRepository.save(asset);
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employee.id,
+        title: 'Asset Assigned',
+        message: `A ${asset.assetName} has been assigned to you`,
+      }),
+    );
+
+    return { message: 'Asset assigned successfully' };
   }
 
   async getAllAssets(): Promise<{ message: string }> {
@@ -1439,6 +1583,14 @@ export class AdminService {
     // Step 9: Save the salary record to the database
     // save() persists the entity and returns it with generated fields (id, createdAt, etc.)
     const savedSalary = await this.salaryRepository.save(newSalary);
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employee.id,
+        title: 'Salary Structure Created',
+        message: `Your salary structure has been set up at ${Number(savedSalary.amount)}`,
+      }),
+    );
 
     // Step 10: Prepare the response with sanitized employee data
     // We only include safe employee fields (no password or refreshToken)
@@ -1542,6 +1694,14 @@ export class AdminService {
     // Step 7: Save the new salary record to the database
     // save() persists the entity and returns it with generated fields (id, createdAt, etc.)
     const savedSalary = await this.salaryRepository.save(newSalary);
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employee.id,
+        title: 'Salary Updated',
+        message: `Your salary has been updated to ${Number(savedSalary.amount)}`,
+      }),
+    );
 
     // Step 8: Prepare the response
     // Include both the previous salary (for reference) and the new salary
@@ -1989,6 +2149,17 @@ export class AdminService {
 
     // Step 11: Save the payment record to the database
     const savedPayment = await this.salaryPaymentRepository.save(newPayment);
+
+    const currency = (data as { currency?: string }).currency ?? 'NGN';
+    const amountForMessage = Number(savedPayment.amountPaid);
+
+    await this.notificationRepository.save(
+      this.notificationRepository.create({
+        userId: employee.id,
+        title: 'Salary Payment Received',
+        message: `Your salary of ${amountForMessage} ${currency} for ${month}/${year} has been recorded`,
+      }),
+    );
 
     // Step 12: Return the response with sanitized employee data
     return {

@@ -28,6 +28,7 @@ import { Asset } from './entities/asset.entity';
 import { AssetAssignment } from './entities/asset-assignment.entity';
 import { Document } from './entities/document.entity';
 import { DocumentAssignment } from './entities/document-assignment.entity';
+import { Notification } from './entities/notification.entity';
 
 // Import existing app components
 import { AppController } from './app.controller';
@@ -100,6 +101,7 @@ import { StaffModule } from './staff/staff.module';
           AssetAssignment,
           Document,
           DocumentAssignment,
+          Notification,
         ],
 
         // synchronize: false - we use migrations instead of auto-sync
