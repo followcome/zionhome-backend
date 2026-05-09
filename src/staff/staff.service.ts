@@ -397,6 +397,55 @@ export class StaffService {
     return this.getMyAttendance(staffId, filters);
   }
 
+  async markAttendance(staffId: number): Promise<{ message: string }> {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayISO = this.toISODate(today);
+
+    const user = await this.userRepository.findOne({
+      where: { id: staffId },
+    });
+
+    if (!user || user.deletedAt) {
+      throw new NotFoundException(`User with ID ${staffId} not found`);
+    }
+
+    const existingAttendance = await this.attendanceRepository
+      .createQueryBuilder('attendance')
+      .where('attendance.employeeId = :staffId', { staffId })
+      .andWhere('attendance.date = :today', { today: todayISO })
+      .getOne();
+
+    if (existingAttendance) {
+      throw new BadRequestException('Attendance already marked for today');
+    }
+
+    const approvedLeave = await this.leaveRequestRepository
+      .createQueryBuilder('leaveRequest')
+      .where('leaveRequest.employeeId = :staffId', { staffId })
+      .andWhere('leaveRequest.status = :status', { status: 'granted' })
+      .andWhere('leaveRequest.startDate <= :today', { today: todayISO })
+      .andWhere('leaveRequest.endDate >= :today', { today: todayISO })
+      .getOne();
+
+    if (approvedLeave) {
+      throw new BadRequestException(
+        'You are on approved leave today and cannot mark attendance',
+      );
+    }
+
+    const attendance = this.attendanceRepository.create({
+      employeeId: staffId,
+      date: today,
+    });
+
+    await this.attendanceRepository.save(attendance);
+
+    return {
+      message: `Attendance marked successfully for ${todayISO}`,
+    };
+  }
+
   async requestLeave(
     staffId: number,
     body: { startDate: string; endDate: string; reason: string },

@@ -49,6 +49,11 @@ export class StaffController {
     return this.staffService.getAttendance(req.user.id, filters);
   }
 
+  @Post('attendance/mark')
+  async markAttendance(@Request() req: { user: { id: number } }) {
+    return this.staffService.markAttendance(req.user.id);
+  }
+
   @Post('leaves/request')
   async requestLeave(
     @Request() req: { user: { id: number } },
