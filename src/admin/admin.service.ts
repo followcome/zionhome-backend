@@ -46,6 +46,9 @@ import { AssetAssignment } from '../entities/asset-assignment.entity';
 import { Document } from '../entities/document.entity';
 import { DocumentAssignment } from '../entities/document-assignment.entity';
 import { Notification } from '../entities/notification.entity';
+import { Procurement } from '../entities/procurement.entity';
+import { Bill } from '../entities/bill.entity';
+import { S3UploadService } from '../shared/s3-upload.service';
 
 // Import DTOs - define the shape of data for employee operations
 import { CreateEmployeeDto, UpdateEmployeeDto } from './dto';
@@ -91,6 +94,14 @@ export class AdminService {
 
     @InjectRepository(Notification)
     private readonly notificationRepository: Repository<Notification>,
+
+    @InjectRepository(Procurement)
+    private readonly procurementRepository: Repository<Procurement>,
+
+    @InjectRepository(Bill)
+    private readonly billRepository: Repository<Bill>,
+
+    private readonly s3UploadService: S3UploadService,
   ) {}
 
   // ============================================
@@ -1197,8 +1208,67 @@ export class AdminService {
     };
   }
 
-  async createProcurement(body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async createProcurement(
+    body: any,
+    adminId: number,
+    files: {
+      image: Express.Multer.File | null;
+      receipt: Express.Multer.File | null;
+    },
+  ): Promise<{
+    message: string;
+    procurement: Procurement;
+  }> {
+    const equipmentName = String(body?.equipmentName || '').trim();
+    const amount = Number(body?.amount);
+    const quantity = Number(body?.quantity);
+    const currency = String(body?.currency || '').toUpperCase();
+    const purchasedOn = body?.purchasedOn ? new Date(body.purchasedOn) : null;
+    const description = body?.description ? String(body.description).trim() : null;
+    const assignTo = body?.assignTo !== undefined ? Number(body.assignTo) : null;
+
+    if (!equipmentName) {
+      throw new BadRequestException('equipmentName is required');
+    }
+    if (!amount || amount <= 0) {
+      throw new BadRequestException('amount is required and must be greater than 0');
+    }
+    if (!['GBP', 'USD', 'NGN'].includes(currency)) {
+      throw new BadRequestException("currency must be one of: 'GBP', 'USD', 'NGN'");
+    }
+    if (!purchasedOn || Number.isNaN(purchasedOn.getTime())) {
+      throw new BadRequestException('purchasedOn is required and must be a valid date');
+    }
+    if (!quantity || quantity <= 0) {
+      throw new BadRequestException('quantity is required and must be greater than 0');
+    }
+
+    const imageUrl = files.image
+      ? await this.s3UploadService.uploadFile(files.image, 'procurements')
+      : null;
+    const receiptUrl = files.receipt
+      ? await this.s3UploadService.uploadFile(files.receipt, 'receipts')
+      : null;
+
+    const procurement = this.procurementRepository.create({
+      equipmentName,
+      unitPrice: amount,
+      quantity,
+      totalPrice: amount * quantity,
+      currency,
+      purchasedOn,
+      description,
+      assignTo: Number.isInteger(assignTo) ? assignTo : null,
+      imageUrl,
+      receiptUrl,
+      addedBy: adminId,
+    });
+
+    const savedProcurement = await this.procurementRepository.save(procurement);
+    return {
+      message: 'Procurement created successfully',
+      procurement: savedProcurement,
+    };
   }
 
   async getAllProcurements(): Promise<{ message: string }> {
@@ -1213,8 +1283,40 @@ export class AdminService {
     return { message: 'coming soon' };
   }
 
-  async createBill(body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async createBill(
+    body: any,
+    adminId: number,
+    receipt: Express.Multer.File | null,
+  ): Promise<{
+    message: string;
+    bill: Bill;
+  }> {
+    const description = String(body?.description || '').trim();
+    const cost = Number(body?.cost);
+
+    if (!description) {
+      throw new BadRequestException('description is required');
+    }
+    if (!cost || cost <= 0) {
+      throw new BadRequestException('cost is required and must be greater than 0');
+    }
+
+    const receiptUrl = receipt
+      ? await this.s3UploadService.uploadFile(receipt, 'bills')
+      : null;
+
+    const bill = this.billRepository.create({
+      description,
+      cost,
+      receiptUrl,
+      addedBy: adminId,
+    });
+
+    const savedBill = await this.billRepository.save(bill);
+    return {
+      message: 'Bill created successfully',
+      bill: savedBill,
+    };
   }
 
   async getAllBills(): Promise<{ message: string }> {
@@ -1229,8 +1331,46 @@ export class AdminService {
     return { message: 'coming soon' };
   }
 
-  async createDocument(body: any): Promise<{ message: string }> {
-    return { message: 'coming soon' };
+  async createDocument(
+    body: any,
+    adminId: number,
+    file: Express.Multer.File | undefined,
+  ): Promise<{
+    message: string;
+    document: {
+      id: number;
+      title: string;
+      fileUrl: string | null;
+      uploadedBy: number | null;
+      createdAt: Date;
+    };
+  }> {
+    const title = String(body?.title || '').trim();
+    if (!title) {
+      throw new BadRequestException('title is required');
+    }
+    if (!file) {
+      throw new BadRequestException('file is required');
+    }
+
+    const fileUrl = await this.s3UploadService.uploadFile(file, 'documents');
+    const document = this.documentRepository.create({
+      title,
+      fileUrl,
+      uploadedBy: adminId,
+    });
+
+    const savedDocument = await this.documentRepository.save(document);
+    return {
+      message: 'Document uploaded successfully',
+      document: {
+        id: savedDocument.id,
+        title: savedDocument.title,
+        fileUrl: savedDocument.fileUrl,
+        uploadedBy: savedDocument.uploadedBy,
+        createdAt: savedDocument.createdAt,
+      },
+    };
   }
 
   async assignDocument(id: string, body: any): Promise<{ message: string }> {

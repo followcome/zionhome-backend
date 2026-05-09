@@ -14,7 +14,11 @@ import {
   Param,
   Body,
   Query,
+  UploadedFile,
+  UploadedFiles,
 } from '@nestjs/common';
+import { Express } from 'express';
+import { S3FileFields, S3SingleFile } from '../shared/s3-upload.interceptor';
 
 // Import AdminGuard to protect all admin routes
 // This ensures only users with role='admin' can access these endpoints
@@ -440,8 +444,23 @@ export class AdminController {
    * Add new equipment procurement.
    */
   @Post('procurements')
-  async createProcurement(@Body() body: any) {
-    return this.adminService.createProcurement(body);
+  @S3FileFields([
+    { name: 'image', maxCount: 1 },
+    { name: 'receipt', maxCount: 1 },
+  ])
+  async createProcurement(
+    @Request() req: { user: { id: number } },
+    @Body() body: any,
+    @UploadedFiles()
+    files: {
+      image?: Express.Multer.File[];
+      receipt?: Express.Multer.File[];
+    },
+  ) {
+    return this.adminService.createProcurement(body, req.user.id, {
+      image: files?.image?.[0] ?? null,
+      receipt: files?.receipt?.[0] ?? null,
+    });
   }
 
   /**
@@ -480,8 +499,13 @@ export class AdminController {
    * Create new bill record.
    */
   @Post('bills')
-  async createBill(@Body() body: any) {
-    return this.adminService.createBill(body);
+  @S3SingleFile('receipt')
+  async createBill(
+    @Request() req: { user: { id: number } },
+    @Body() body: any,
+    @UploadedFile() receipt: Express.Multer.File | undefined,
+  ) {
+    return this.adminService.createBill(body, req.user.id, receipt ?? null);
   }
 
   /**
@@ -520,8 +544,13 @@ export class AdminController {
    * Upload document.
    */
   @Post('documents')
-  async createDocument(@Body() body: any) {
-    return this.adminService.createDocument(body);
+  @S3SingleFile('file')
+  async createDocument(
+    @Request() req: { user: { id: number } },
+    @Body() body: any,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    return this.adminService.createDocument(body, req.user.id, file);
   }
 
   /**
